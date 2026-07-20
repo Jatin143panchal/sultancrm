@@ -1,4 +1,4 @@
-// src/components/Leads.tsx - Updated with Phone Hide, Call Status & Comments
+// src/components/Leads.tsx - Complete Working Version
 
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,9 +19,9 @@ import {
   XCircle, Flame, Snowflake, Sun, ChevronLeft, ChevronRight, CheckCircle2,
   Radio, BarChart3, PieChartIcon, ChartColumn, Clock, Coffee, LogOut, Activity,
   Timer, ListTodo, PhoneCall, CalendarClock, AlertCircle, Camera, ShieldCheck,
-  UserCheck, UserX, UserCog, Building2, Mail, MapPin, Award, Zap, 
+  UserCheck, UserX, UserCog, Building2, Mail, MapPin, Award, Zap,
   PhoneIncoming, PhoneOutgoing, PhoneMissed, PhoneOff, MessageSquarePlus,
-  Send, Save, History
+  Send, Save, History, RotateCcw
 } from "lucide-react";
 import { isToday, subDays, format } from "date-fns";
 import { toast } from "sonner";
@@ -99,7 +99,7 @@ interface Lead {
   lost_date: string | null;
   business_status: string | null;
   next_call_date: string | null;
-  call_status: string | null;  // ✅ New field
+  call_status: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -160,30 +160,613 @@ const getTempConfig = (t: string | null) => TEMPERATURES.find(x => x.value === t
 const getCallStatusConfig = (s: string | null) => CALL_STATUSES.find(x => x.value === s) || null;
 const formatCurrency = (v: number) => `Rs ${v.toLocaleString("en-IN")}`;
 
+function getInitials(name: string) {
+  if (!name) return "U";
+  return name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2);
+}
+
+const AVATAR_COLORS = ["#3b82f6", "#8b5cf6", "#ec4899", "#f97316", "#10b981", "#06b6d4", "#f59e0b", "#ef4444"];
+
+function avatarColor(name: string) {
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) % AVATAR_COLORS.length;
+  return AVATAR_COLORS[h];
+}
+
+function getLeadScore(lead: Lead): number {
+  let score = 0;
+  if (lead.name) score += 10;
+  if (lead.phone) score += 15;
+  if (lead.address) score += 10;
+  if (lead.medicine) score += 10;
+  if ((lead.value || 0) > 0) score += 15;
+  score += STAGE_BONUS[lead.stage] ?? 0;
+  score += TEMP_BONUS[lead.temperature || ""] ?? 0;
+  return Math.min(score, 100);
+}
+
+function formatHMS(totalSeconds: number) {
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = Math.floor(totalSeconds % 60);
+  return [h, m, s].map(n => String(n).padStart(2, "0")).join(":");
+}
+
+function buildWhatsAppLink(lead: Lead): string | null {
+  if (!lead.phone) return null;
+  const digits = lead.phone.replace(/\D/g, "");
+  const withCountry = digits.length === 10 ? `91${digits}` : digits;
+  const message = encodeURIComponent(`Hi ${lead.name}, following up on your order (${lead.medicine || "your product"}). Let us know if you need anything!`);
+  return `https://wa.me/${withCountry}?text=${message}`;
+}
+
 // ── Phone Number Hide Function ──────────────────────────────────────────
 function hidePhoneNumber(phone: string | null): string {
   if (!phone) return "-";
   const digits = phone.replace(/\D/g, "");
   if (digits.length < 10) return phone;
-  // Show first 4 and last 2 digits, hide middle with ****
   const first4 = digits.slice(0, 4);
   const last2 = digits.slice(-2);
   const hidden = digits.slice(4, -2).replace(/./g, "*");
   return `${first4}${hidden}${last2}`;
 }
 
-// ── Components ──────────────────────────────────────────────────────────
+// ── Helper Components ───────────────────────────────────────────────────
 
-// ... (CameraDialog, EmployeeCard, MyAttendanceCard, TeamAttendanceTable components remain same)
+function ScoreBadge({ score }: { score: number }) {
+  const color = score >= 70 ? "#10b981" : score >= 40 ? "#f59e0b" : "#ef4444";
+  return (
+    <div className="w-8 h-8 rounded-full border-2 flex items-center justify-center text-xs font-semibold" style={{ borderColor: color, color }}>
+      {score}
+    </div>
+  );
+}
 
-// ── Comment Component ──────────────────────────────────────────────────
+function TemperatureBadge({ temperature }: { temperature: string | null }) {
+  const cfg = getTempConfig(temperature);
+  if (!cfg) return <span className="text-xs text-muted-foreground">-</span>;
+  return (
+    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold border" style={{ color: cfg.color, background: cfg.bg, borderColor: `${cfg.color}30` }}>
+      {cfg.label}
+    </span>
+  );
+}
+
+function StagePill({ stage, subStage }: { stage: string; subStage: string | null }) {
+  const cfg = getStageConfig(stage);
+  if (!cfg) return <span className="text-xs text-muted-foreground">-</span>;
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold border" style={{ color: cfg.color, background: cfg.bg, borderColor: `${cfg.color}30` }}>
+        {cfg.icon} {cfg.label}
+      </span>
+      {subStage && subStage !== "-" && <span className="text-[10px] text-muted-foreground">{subStage}</span>}
+    </div>
+  );
+}
+
+// ── Camera Dialog ──────────────────────────────────────────────────────
+function CameraDialog({
+  open,
+  onClose,
+  onCapture,
+  title
+}: {
+  open: boolean;
+  onClose: () => void;
+  onCapture: (blob: Blob) => void;
+  title: string;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [captured, setCaptured] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      streamRef.current?.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+      setCaptured(null);
+      setError(null);
+      return;
+    }
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
+      .then(stream => {
+        streamRef.current = stream;
+        if (videoRef.current) videoRef.current.srcObject = stream;
+      })
+      .catch(() => setError("Camera access denied. Please allow camera permission."));
+    return () => { streamRef.current?.getTracks().forEach(t => t.stop()); };
+  }, [open]);
+
+  const takePhoto = () => {
+    const video = videoRef.current, canvas = canvasRef.current;
+    if (!video || !canvas) return;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d")?.drawImage(video, 0, 0);
+    setCaptured(canvas.toDataURL("image/jpeg", 0.85));
+  };
+
+  const confirm = () => {
+    canvasRef.current?.toBlob(blob => { if (blob) onCapture(blob); }, "image/jpeg", 0.85);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Camera className="h-5 w-5" />
+            {title}
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          {error ? (
+            <p className="text-sm text-destructive text-center py-8">{error}</p>
+          ) : (
+            <div className="relative rounded-lg overflow-hidden bg-black aspect-square">
+              {!captured && <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover -scale-x-100" />}
+              {captured && <img src={captured} alt="Captured selfie" className="w-full h-full object-cover -scale-x-100" />}
+            </div>
+          )}
+          <canvas ref={canvasRef} className="hidden" />
+        </div>
+        <div className="flex gap-2">
+          {!error && !captured && <Button onClick={takePhoto} className="w-full"><Camera className="mr-2 h-4 w-4" />Take Photo</Button>}
+          {!error && captured && (
+            <>
+              <Button variant="outline" onClick={() => setCaptured(null)} className="flex-1">
+                <RotateCcw className="mr-2 h-4 w-4" />Retake
+              </Button>
+              <Button onClick={confirm} className="flex-1">
+                <CheckCircle2 className="mr-2 h-4 w-4" />Confirm
+              </Button>
+            </>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── My Attendance Card ─────────────────────────────────────────────────
+function MyAttendanceCard({ userId }: { userId: string }) {
+  const queryClient = useQueryClient();
+  const [cameraMode, setCameraMode] = useState<"check_in" | "check_out" | null>(null);
+  const [busy, setBusy] = useState(false);
+  const today = format(new Date(), "yyyy-MM-dd");
+
+  const { data: todayRecord, isLoading, refetch } = useQuery({
+    queryKey: ["my_attendance", userId, today],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("attendance")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("date", today)
+        .maybeSingle();
+      if (error) throw error;
+      return data as Attendance | null;
+    },
+    enabled: !!userId,
+  });
+
+  const uploadPhoto = useCallback(async (blob: Blob, tag: string) => {
+    const path = `${userId}/${today}_${tag}_${Date.now()}.jpg`;
+    const { error } = await supabase.storage
+      .from("attendance-photos")
+      .upload(path, blob, { contentType: "image/jpeg" });
+    if (error) throw error;
+    const { data } = supabase.storage.from("attendance-photos").getPublicUrl(path);
+    return data.publicUrl;
+  }, [userId, today]);
+
+  const handleCheckIn = useCallback(async (blob: Blob) => {
+    if (!userId) return;
+    setBusy(true);
+    try {
+      const photoUrl = await uploadPhoto(blob, "checkin");
+      const { error } = await supabase.from("attendance").upsert({
+        user_id: userId,
+        date: today,
+        check_in: new Date().toISOString(),
+        check_in_photo_url: photoUrl,
+        status: "present",
+        type: "office",
+      }, { onConflict: "user_id,date" });
+      if (error) throw error;
+      toast.success("✅ Checked in successfully!");
+      setCameraMode(null);
+      refetch();
+    } catch (err: any) {
+      toast.error(err.message || "Check-in failed");
+    } finally {
+      setBusy(false);
+    }
+  }, [userId, today, uploadPhoto, refetch]);
+
+  const handleCheckOut = useCallback(async (blob: Blob) => {
+    if (!userId || !todayRecord) return;
+    setBusy(true);
+    try {
+      const photoUrl = await uploadPhoto(blob, "checkout");
+      const { error } = await supabase
+        .from("attendance")
+        .update({
+          check_out: new Date().toISOString(),
+          check_out_photo_url: photoUrl
+        })
+        .eq("id", todayRecord.id);
+      if (error) throw error;
+      toast.success("✅ Checked out successfully!");
+      setCameraMode(null);
+      refetch();
+    } catch (err: any) {
+      toast.error(err.message || "Check-out failed");
+    } finally {
+      setBusy(false);
+    }
+  }, [userId, todayRecord, uploadPhoto, refetch]);
+
+  const startLunch = useCallback(async () => {
+    if (!todayRecord) return;
+    setBusy(true);
+    try {
+      const { error } = await supabase
+        .from("attendance")
+        .update({ lunch_start: new Date().toISOString() })
+        .eq("id", todayRecord.id);
+      if (error) throw error;
+      toast.success("☕ Lunch break started");
+      refetch();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to start lunch");
+    } finally {
+      setBusy(false);
+    }
+  }, [todayRecord, refetch]);
+
+  const endLunch = useCallback(async () => {
+    if (!todayRecord) return;
+    setBusy(true);
+    try {
+      const { error } = await supabase
+        .from("attendance")
+        .update({ lunch_end: new Date().toISOString() })
+        .eq("id", todayRecord.id);
+      if (error) throw error;
+      toast.success("☕ Lunch break ended");
+      refetch();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to end lunch");
+    } finally {
+      setBusy(false);
+    }
+  }, [todayRecord, refetch]);
+
+  if (isLoading) {
+    return <div className="flex items-center justify-center h-32"><Loader2 className="h-6 w-6 animate-spin" /></div>;
+  }
+
+  const checkedIn = !!todayRecord?.check_in;
+  const checkedOut = !!todayRecord?.check_out;
+  const onLunch = !!todayRecord?.lunch_start && !todayRecord?.lunch_end;
+
+  return (
+    <Card className="border-primary/20">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center justify-between text-base">
+          <span className="flex items-center gap-2">
+            <UserCheck className="h-5 w-5 text-primary" />
+            My Attendance — Today
+          </span>
+          <Badge variant={checkedOut ? "secondary" : checkedIn ? (onLunch ? "default" : "default") : "outline"}>
+            {checkedOut ? "Checked Out" : checkedIn ? (onLunch ? "On Lunch" : "Checked In") : "Not Checked In"}
+          </Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm mb-4">
+          <div className="p-3 rounded-lg border bg-muted/30">
+            <p className="text-xs text-muted-foreground mb-1">Check In</p>
+            <p className="font-semibold">{todayRecord?.check_in ? format(new Date(todayRecord.check_in), "hh:mm a") : "-"}</p>
+          </div>
+          <div className="p-3 rounded-lg border bg-muted/30">
+            <p className="text-xs text-muted-foreground mb-1">Lunch</p>
+            <p className="font-semibold">
+              {todayRecord?.lunch_start ? format(new Date(todayRecord.lunch_start), "hh:mm a") : "-"}
+              {onLunch && " → ongoing"}
+              {todayRecord?.lunch_end && ` → ${format(new Date(todayRecord.lunch_end), "hh:mm a")}`}
+            </p>
+          </div>
+          <div className="p-3 rounded-lg border bg-muted/30">
+            <p className="text-xs text-muted-foreground mb-1">Check Out</p>
+            <p className="font-semibold">{todayRecord?.check_out ? format(new Date(todayRecord.check_out), "hh:mm a") : "-"}</p>
+          </div>
+          <div className="p-3 rounded-lg border bg-muted/30 flex items-center gap-2">
+            {todayRecord?.check_in_photo_url ? (
+              <img src={todayRecord.check_in_photo_url} alt="selfie" className="w-10 h-10 rounded-full object-cover border" />
+            ) : (
+              <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center">
+                <Camera className="h-4 w-4 text-gray-400" />
+              </div>
+            )}
+            <div>
+              <p className="text-xs text-muted-foreground">Selfie</p>
+              <p className="text-xs font-medium">{todayRecord?.check_in_photo_url ? "✅ Captured" : "Pending"}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {!checkedIn && (
+            <Button onClick={() => setCameraMode("check_in")} disabled={busy}>
+              <Camera className="mr-2 h-4 w-4" /> Check In with Selfie
+            </Button>
+          )}
+          {checkedIn && !checkedOut && !onLunch && (
+            <Button variant="outline" onClick={startLunch} disabled={busy}>
+              <Coffee className="mr-2 h-4 w-4" /> Start Lunch Break
+            </Button>
+          )}
+          {onLunch && (
+            <Button variant="outline" onClick={endLunch} disabled={busy}>
+              <Coffee className="mr-2 h-4 w-4" /> End Lunch Break
+            </Button>
+          )}
+          {checkedIn && !checkedOut && (
+            <Button variant="destructive" onClick={() => setCameraMode("check_out")} disabled={busy}>
+              <LogOut className="mr-2 h-4 w-4" /> Check Out with Selfie
+            </Button>
+          )}
+          {checkedOut && (
+            <span className="text-sm text-green-600 flex items-center gap-1">
+              <CheckCircle2 className="h-4 w-4" /> Day complete. See you tomorrow!
+            </span>
+          )}
+        </div>
+      </CardContent>
+
+      <CameraDialog
+        open={cameraMode === "check_in"}
+        onClose={() => setCameraMode(null)}
+        onCapture={handleCheckIn}
+        title="Check-In Selfie"
+      />
+      <CameraDialog
+        open={cameraMode === "check_out"}
+        onClose={() => setCameraMode(null)}
+        onCapture={handleCheckOut}
+        title="Check-Out Selfie"
+      />
+    </Card>
+  );
+}
+
+// ── Employee Card ──────────────────────────────────────────────────────
+function EmployeeCard({ agent, onStatusChange }: { agent: Agent; onStatusChange: (id: string, status: Agent["status"]) => void }) {
+  const statusColor = {
+    online: "text-green-600 bg-green-50 border-green-200",
+    break: "text-orange-600 bg-orange-50 border-orange-200",
+    offline: "text-gray-600 bg-gray-50 border-gray-200"
+  };
+  const statusIcon = {
+    online: <UserCheck className="h-4 w-4" />,
+    break: <Coffee className="h-4 w-4" />,
+    offline: <UserX className="h-4 w-4" />
+  };
+
+  return (
+    <Card className="hover:shadow-lg transition-shadow">
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg" style={{ background: avatarColor(agent.name) }}>
+              {getInitials(agent.name)}
+            </div>
+            <div>
+              <p className="font-semibold">{agent.name}</p>
+              <p className="text-xs text-muted-foreground">{agent.role} • {agent.department}</p>
+              <span className={`text-xs px-2 py-0.5 rounded-full border inline-flex items-center gap-1 mt-1 ${statusColor[agent.status]}`}>
+                {statusIcon[agent.status]} {agent.status}
+              </span>
+            </div>
+          </div>
+          <Badge variant="outline" className="text-xs">
+            <Clock className="h-3 w-3 mr-1" />
+            {agent.total_working_hours ? formatHMS(agent.total_working_hours * 3600) : "0h"}
+          </Badge>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2 mt-3 text-xs">
+          <div className="p-2 rounded bg-muted/30">
+            <p className="text-muted-foreground">Login</p>
+            <p className="font-medium">{agent.login_time ? format(new Date(agent.login_time), "hh:mm a") : "-"}</p>
+          </div>
+          <div className="p-2 rounded bg-muted/30">
+            <p className="text-muted-foreground">Break</p>
+            <p className="font-medium">{agent.break_time ? format(new Date(agent.break_time), "hh:mm a") : "-"}</p>
+          </div>
+          <div className="p-2 rounded bg-muted/30">
+            <p className="text-muted-foreground">Logout</p>
+            <p className="font-medium">{agent.logout_time ? format(new Date(agent.logout_time), "hh:mm a") : "Active"}</p>
+          </div>
+        </div>
+
+        <div className="flex gap-2 mt-3">
+          <Button size="sm" variant={agent.status === "online" ? "default" : "outline"} onClick={() => onStatusChange(agent.id, "online")}>
+            <UserCheck className="h-3 w-3 mr-1" /> Active
+          </Button>
+          <Button size="sm" variant={agent.status === "break" ? "default" : "outline"} onClick={() => onStatusChange(agent.id, "break")}>
+            <Coffee className="h-3 w-3 mr-1" /> Break
+          </Button>
+          <Button size="sm" variant={agent.status === "offline" ? "default" : "outline"} onClick={() => onStatusChange(agent.id, "offline")}>
+            <LogOut className="h-3 w-3 mr-1" /> Logout
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Team Attendance Table ──────────────────────────────────────────────
+function TeamAttendanceTable({ agents, attendance }: { agents: Agent[]; attendance: Attendance[] }) {
+  const [photoPreview, setPhotoPreview] = useState<{ url: string; who: string } | null>(null);
+  const [dateFilter, setDateFilter] = useState("");
+
+  const filteredAttendance = useMemo(() => {
+    const today = dateFilter || format(new Date(), "yyyy-MM-dd");
+    return attendance.filter(a => a.date === today);
+  }, [attendance, dateFilter]);
+
+  const getAgentName = (userId: string) => {
+    const agent = agents.find(a => a.id === userId);
+    return agent?.name || "Unknown";
+  };
+
+  const getAgentStatus = (userId: string) => {
+    const agent = agents.find(a => a.id === userId);
+    return agent?.status || "offline";
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center justify-between text-base">
+          <span className="flex items-center gap-2">
+            <Users className="h-5 w-5 text-primary" />
+            Team Attendance — {dateFilter || "Today"}
+          </span>
+          <div className="flex items-center gap-2">
+            <Input
+              type="date"
+              value={dateFilter}
+              onChange={e => setDateFilter(e.target.value)}
+              className="w-40 text-sm"
+            />
+            <Badge variant="outline">
+              {filteredAttendance.filter(a => a.status === "present").length} Present
+            </Badge>
+          </div>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {filteredAttendance.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-8">
+            No attendance records for this date.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Photo</TableHead>
+                  <TableHead>Employee</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Check In</TableHead>
+                  <TableHead>Lunch</TableHead>
+                  <TableHead>Check Out</TableHead>
+                  <TableHead>Working Hours</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredAttendance.map(record => {
+                  const checkInTime = record.check_in ? new Date(record.check_in) : null;
+                  const checkOutTime = record.check_out ? new Date(record.check_out) : null;
+                  const lunchStart = record.lunch_start ? new Date(record.lunch_start) : null;
+                  const lunchEnd = record.lunch_end ? new Date(record.lunch_end) : null;
+
+                  let workingHours = 0;
+                  if (checkInTime && checkOutTime) {
+                    let diff = checkOutTime.getTime() - checkInTime.getTime();
+                    if (lunchStart && lunchEnd) {
+                      diff -= lunchEnd.getTime() - lunchStart.getTime();
+                    }
+                    workingHours = Math.max(0, diff / 3600000);
+                  }
+
+                  return (
+                    <TableRow key={record.id}>
+                      <TableCell>
+                        {record.check_in_photo_url ? (
+                          <button onClick={() => setPhotoPreview({
+                            url: record.check_in_photo_url!,
+                            who: getAgentName(record.user_id)
+                          })}>
+                            <img
+                              src={record.check_in_photo_url}
+                              alt="selfie"
+                              className="w-9 h-9 rounded-full object-cover border hover:opacity-80"
+                            />
+                          </button>
+                        ) : (
+                          <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center">
+                            <Camera className="h-3.5 w-3.5 text-gray-400" />
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{getAgentName(record.user_id)}</span>
+                          <Badge variant={getAgentStatus(record.user_id) === "online" ? "default" : "outline"} className="text-xs">
+                            {getAgentStatus(record.user_id)}
+                          </Badge>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={record.status === "present" ? "default" : "outline"}>
+                          {record.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {checkInTime ? format(checkInTime, "hh:mm a") : "-"}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {lunchStart ? (
+                          <span className="flex items-center gap-1">
+                            <Coffee className="h-3 w-3 text-orange-500" />
+                            {format(lunchStart, "hh:mm a")}
+                            {lunchEnd && ` → ${format(lunchEnd, "hh:mm a")}`}
+                            {!lunchEnd && " → ongoing"}
+                          </span>
+                        ) : "-"}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {checkOutTime ? format(checkOutTime, "hh:mm a") : "-"}
+                      </TableCell>
+                      <TableCell className="text-sm font-medium">
+                        {workingHours > 0 ? `${workingHours.toFixed(1)}h` : "-"}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </CardContent>
+
+      <Dialog open={!!photoPreview} onOpenChange={() => setPhotoPreview(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{photoPreview?.who} — Check-In Selfie</DialogTitle>
+          </DialogHeader>
+          {photoPreview && <img src={photoPreview.url} alt="check-in selfie" className="w-full rounded-lg" />}
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+}
+
+// ── Lead Comments Component ─────────────────────────────────────────────
 function LeadComments({ leadId, currentUser }: { leadId: string; currentUser: any }) {
   const [comments, setComments] = useState<LeadComment[]>([]);
   const [newComment, setNewComment] = useState("");
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  // Fetch comments
   const fetchComments = useCallback(async () => {
     setLoading(true);
     try {
@@ -209,7 +792,6 @@ function LeadComments({ leadId, currentUser }: { leadId: string; currentUser: an
     if (leadId) fetchComments();
   }, [leadId, fetchComments]);
 
-  // Add comment
   const addComment = useCallback(async () => {
     if (!newComment.trim() || !currentUser) return;
     setSubmitting(true);
@@ -238,9 +820,8 @@ function LeadComments({ leadId, currentUser }: { leadId: string; currentUser: an
     }
   }, [leadId, currentUser, newComment]);
 
-  const getInitials = (name: string) => {
-    if (!name) return "U";
-    return name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2);
+  const getUserName = (comment: LeadComment) => {
+    return (comment as any).profiles?.display_name || "Unknown User";
   };
 
   return (
@@ -250,7 +831,6 @@ function LeadComments({ leadId, currentUser }: { leadId: string; currentUser: an
         <h4 className="font-semibold text-sm">Comments ({comments.length})</h4>
       </div>
 
-      {/* Add Comment */}
       <div className="flex gap-2">
         <Textarea
           placeholder="Add a comment..."
@@ -274,7 +854,6 @@ function LeadComments({ leadId, currentUser }: { leadId: string; currentUser: an
         </Button>
       </div>
 
-      {/* Comments List */}
       {loading ? (
         <div className="flex items-center justify-center py-4">
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -285,12 +864,12 @@ function LeadComments({ leadId, currentUser }: { leadId: string; currentUser: an
         <div className="max-h-[300px] overflow-y-auto space-y-3">
           {comments.map((comment) => (
             <div key={comment.id} className="flex gap-3 p-3 rounded-lg bg-muted/30">
-              <div className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0" style={{ background: avatarColor(comment.user_name || "User") }}>
-                {getInitials(comment.user_name || "User")}
+              <div className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0" style={{ background: avatarColor(getUserName(comment)) }}>
+                {getInitials(getUserName(comment))}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium text-sm">{comment.user_name || "Unknown User"}</span>
+                  <span className="font-medium text-sm">{getUserName(comment)}</span>
                   <span className="text-xs text-muted-foreground">{format(new Date(comment.created_at), "dd MMM, hh:mm a")}</span>
                 </div>
                 <p className="text-sm break-words">{comment.comment}</p>
@@ -437,6 +1016,20 @@ export default function Leads() {
     }
   }, [form, fetchAll]);
 
+  // ── Assign Lead ──
+  const handleAssign = useCallback(async (id: string, agentId: string) => {
+    const finalAgent = agentId === "unassigned" ? null : agentId;
+    setLeads(prev => prev.map(l => (l.id === id ? { ...l, assigned_to: finalAgent } : l)));
+    try {
+      const { error } = await supabase.from("leads").update({ assigned_to: finalAgent }).eq("id", id);
+      if (error) throw error;
+      toast.success("✅ Lead assigned");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to assign");
+      await fetchAll();
+    }
+  }, [fetchAll]);
+
   // ── Update Call Status ──────────────────────────────────────────────
   const handleUpdateCallStatus = useCallback(async (id: string, callStatus: string) => {
     setLeads(prev => prev.map(l => (l.id === id ? { ...l, call_status: callStatus } : l)));
@@ -445,7 +1038,7 @@ export default function Leads() {
       const { error } = await supabase.from("leads").update({ call_status: callStatus }).eq("id", id);
       if (error) throw error;
       logActivity(id, "call_status_updated", `Call Status: ${callStatus}`);
-      toast.success(`📞 Call status updated to ${CALL_STATUSES.find(s => s.value === callStatus)?.label || callStatus}`);
+      toast.success(`📞 Call status updated`);
     } catch (err: any) {
       toast.error(err.message || "Failed to update call status");
       await fetchAll();
@@ -688,7 +1281,7 @@ export default function Leads() {
         </div>
       </div>
 
-      {/* ─── MY ATTENDANCE ────────────────────────────────────────────── */}
+      {/* ─── MY ATTENDANCE (for all users) ────────────────────────────── */}
       {currentUser && <MyAttendanceCard userId={currentUser.id} />}
 
       {/* ─── TEAM OVERVIEW (Admin Only) ──────────────────────────────── */}
@@ -742,6 +1335,21 @@ export default function Leads() {
             <Card>
               <CardContent className="p-4">
                 <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-gray-50 flex items-center justify-center">
+                    <UserX className="h-5 w-5 text-gray-600" />
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold text-gray-600">
+                      {agents.filter(a => a.status === "offline").length}
+                    </p>
+                    <p className="text-xs text-muted-foreground">Offline</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-lg bg-purple-50 flex items-center justify-center">
                     <TrendingUp className="h-5 w-5 text-purple-600" />
                   </div>
@@ -776,19 +1384,6 @@ export default function Leads() {
                   <div>
                     <p className="text-2xl font-bold text-green-600">{stats.interested}</p>
                     <p className="text-xs text-muted-foreground">Interested</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-orange-50 flex items-center justify-center">
-                    <PhoneOutgoing className="h-5 w-5 text-orange-600" />
-                  </div>
-                  <div>
-                    <p className="text-2xl font-bold text-orange-600">{stats.ringing}</p>
-                    <p className="text-xs text-muted-foreground">Ringing</p>
                   </div>
                 </div>
               </CardContent>
@@ -848,6 +1443,7 @@ export default function Leads() {
               </Button>
             </div>
 
+            {/* Import Dialog */}
             <Dialog open={uploadOpen} onOpenChange={o => {
               setUploadOpen(o);
               if (!o) { setUploadPreview([]);
@@ -916,6 +1512,7 @@ export default function Leads() {
               </DialogContent>
             </Dialog>
 
+            {/* Add Lead Dialog */}
             <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
               <DialogTrigger asChild>
                 <Button size="sm">
@@ -1378,7 +1975,3 @@ export default function Leads() {
     </div>
   );
 }
-
-// ── Helper Components ────────────────────────────────────────────────
-
-// ... (ScoreBadge, TemperatureBadge, StagePill, RotateCcw components remain same)
