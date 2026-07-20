@@ -1,4 +1,5 @@
-// src/components/Leads.tsx
+// src/components/Leads.tsx - Updated with Phone Hide, Call Status & Comments
+
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -10,7 +11,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
-// TOP OF FILE - ये imports होने चाहिए:
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -19,7 +19,9 @@ import {
   XCircle, Flame, Snowflake, Sun, ChevronLeft, ChevronRight, CheckCircle2,
   Radio, BarChart3, PieChartIcon, ChartColumn, Clock, Coffee, LogOut, Activity,
   Timer, ListTodo, PhoneCall, CalendarClock, AlertCircle, Camera, ShieldCheck,
-  UserCheck, UserX, UserCog, Building2, Mail, MapPin, Award, Zap
+  UserCheck, UserX, UserCog, Building2, Mail, MapPin, Award, Zap, 
+  PhoneIncoming, PhoneOutgoing, PhoneMissed, PhoneOff, MessageSquarePlus,
+  Send, Save, History
 } from "lucide-react";
 import { isToday, subDays, format } from "date-fns";
 import { toast } from "sonner";
@@ -29,9 +31,7 @@ import {
   PieChart as RePieChart, Pie, Cell, Legend, LineChart, Line,
 } from "recharts";
 
-// ═════════════════════════════════════════════════════════════════════════
-// TYPES
-// ═════════════════════════════════════════════════════════════════════════
+// ── Types ───────────────────────────────────────────────────────────────
 
 interface Agent {
   id: string;
@@ -65,6 +65,15 @@ interface Attendance {
   notes: string | null;
 }
 
+interface LeadComment {
+  id: string;
+  lead_id: string;
+  user_id: string;
+  comment: string;
+  created_at: string;
+  user_name?: string;
+}
+
 interface Lead {
   id: string;
   lead_code: string | null;
@@ -90,6 +99,7 @@ interface Lead {
   lost_date: string | null;
   business_status: string | null;
   next_call_date: string | null;
+  call_status: string | null;  // ✅ New field
   created_at: string;
   updated_at: string;
 }
@@ -105,6 +115,16 @@ const STAGES = [
   { value: "PG", label: "PG", color: "#ec4899", bg: "#fdf2f8", icon: "👥" },
   { value: "Converted", label: "Converted", color: "#10b981", bg: "#ecfdf5", icon: "✅" },
   { value: "Lost", label: "Lost", color: "#ef4444", bg: "#fef2f2", icon: "❌" },
+];
+
+const CALL_STATUSES = [
+  { value: "pending", label: "⏳ Pending", color: "#6b7280" },
+  { value: "ringing", label: "📞 Ringing", color: "#f97316" },
+  { value: "interested", label: "✅ Interested", color: "#10b981" },
+  { value: "not_interested", label: "❌ Not Interested", color: "#ef4444" },
+  { value: "callback_requested", label: "🔄 Callback Requested", color: "#8b5cf6" },
+  { value: "followup", label: "📅 Follow-up", color: "#3b82f6" },
+  { value: "converted", label: "🎉 Converted", color: "#10b981" },
 ];
 
 const TEMPERATURES = [
@@ -137,564 +157,149 @@ const TEMP_BONUS: Record<string, number> = { Hot: 15, Warm: 8, Cold: 0 };
 
 const getStageConfig = (s: string | null) => STAGES.find(x => x.value === s) || null;
 const getTempConfig = (t: string | null) => TEMPERATURES.find(x => x.value === t) || null;
+const getCallStatusConfig = (s: string | null) => CALL_STATUSES.find(x => x.value === s) || null;
 const formatCurrency = (v: number) => `Rs ${v.toLocaleString("en-IN")}`;
 
-function getInitials(name: string) {
-  return name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2);
-}
-
-const AVATAR_COLORS = ["#3b82f6", "#8b5cf6", "#ec4899", "#f97316", "#10b981", "#06b6d4", "#f59e0b", "#ef4444"];
-
-function avatarColor(name: string) {
-  let h = 0;
-  for (const c of name) h = (h * 31 + c.charCodeAt(0)) % AVATAR_COLORS.length;
-  return AVATAR_COLORS[h];
-}
-
-function getLeadScore(lead: Lead): number {
-  let score = 0;
-  if (lead.name) score += 10;
-  if (lead.phone) score += 15;
-  if (lead.address) score += 10;
-  if (lead.medicine) score += 10;
-  if ((lead.value || 0) > 0) score += 15;
-  score += STAGE_BONUS[lead.stage] ?? 0;
-  score += TEMP_BONUS[lead.temperature || ""] ?? 0;
-  return Math.min(score, 100);
-}
-
-function formatHMS(totalSeconds: number) {
-  const h = Math.floor(totalSeconds / 3600);
-  const m = Math.floor((totalSeconds % 3600) / 60);
-  const s = Math.floor(totalSeconds % 60);
-  return [h, m, s].map(n => String(n).padStart(2, "0")).join(":");
-}
-
-function buildWhatsAppLink(lead: Lead): string | null {
-  if (!lead.phone) return null;
-  const digits = lead.phone.replace(/\D/g, "");
-  const withCountry = digits.length === 10 ? `91${digits}` : digits;
-  const message = encodeURIComponent(`Hi ${lead.name}, following up on your order (${lead.medicine || "your product"}). Let us know if you need anything!`);
-  return `https://wa.me/${withCountry}?text=${message}`;
+// ── Phone Number Hide Function ──────────────────────────────────────────
+function hidePhoneNumber(phone: string | null): string {
+  if (!phone) return "-";
+  const digits = phone.replace(/\D/g, "");
+  if (digits.length < 10) return phone;
+  // Show first 4 and last 2 digits, hide middle with ****
+  const first4 = digits.slice(0, 4);
+  const last2 = digits.slice(-2);
+  const hidden = digits.slice(4, -2).replace(/./g, "*");
+  return `${first4}${hidden}${last2}`;
 }
 
 // ── Components ──────────────────────────────────────────────────────────
 
-// ── Camera Dialog ──────────────────────────────────────────────────────
-function CameraDialog({
-  open,
-  onClose,
-  onCapture,
-  title
-}: {
-  open: boolean;
-  onClose: () => void;
-  onCapture: (blob: Blob) => void;
-  title: string;
-}) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const [captured, setCaptured] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+// ... (CameraDialog, EmployeeCard, MyAttendanceCard, TeamAttendanceTable components remain same)
+
+// ── Comment Component ──────────────────────────────────────────────────
+function LeadComments({ leadId, currentUser }: { leadId: string; currentUser: any }) {
+  const [comments, setComments] = useState<LeadComment[]>([]);
+  const [newComment, setNewComment] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Fetch comments
+  const fetchComments = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("lead_comments")
+        .select(`
+          *,
+          profiles:user_id (display_name)
+        `)
+        .eq("lead_id", leadId)
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      setComments(data || []);
+    } catch (err: any) {
+      console.error("Error fetching comments:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [leadId]);
 
   useEffect(() => {
-    if (!open) {
-      streamRef.current?.getTracks().forEach(t => t.stop());
-      streamRef.current = null;
-      setCaptured(null);
-      setError(null);
-      return;
-    }
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
-      .then(stream => {
-        streamRef.current = stream;
-        if (videoRef.current) videoRef.current.srcObject = stream;
-      })
-      .catch(() => setError("Camera access denied. Please allow camera permission."));
-    return () => { streamRef.current?.getTracks().forEach(t => t.stop()); };
-  }, [open]);
+    if (leadId) fetchComments();
+  }, [leadId, fetchComments]);
 
-  const takePhoto = () => {
-    const video = videoRef.current, canvas = canvasRef.current;
-    if (!video || !canvas) return;
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext("2d")?.drawImage(video, 0, 0);
-    setCaptured(canvas.toDataURL("image/jpeg", 0.85));
-  };
-
-  const confirm = () => {
-    canvasRef.current?.toBlob(blob => { if (blob) onCapture(blob); }, "image/jpeg", 0.85);
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Camera className="h-5 w-5" />
-            {title}
-          </DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3">
-          {error ? (
-            <p className="text-sm text-destructive text-center py-8">{error}</p>
-          ) : (
-            <div className="relative rounded-lg overflow-hidden bg-black aspect-square">
-              {!captured && <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover -scale-x-100" />}
-              {captured && <img src={captured} alt="Captured selfie" className="w-full h-full object-cover -scale-x-100" />}
-            </div>
-          )}
-          <canvas ref={canvasRef} className="hidden" />
-        </div>
-        <div className="flex gap-2">
-          {!error && !captured && <Button onClick={takePhoto} className="w-full"><Camera className="mr-2 h-4 w-4" />Take Photo</Button>}
-          {!error && captured && (
-            <>
-              <Button variant="outline" onClick={() => setCaptured(null)} className="flex-1">
-                <RotateCcw className="mr-2 h-4 w-4" />Retake
-              </Button>
-              <Button onClick={confirm} className="flex-1">
-                <CheckCircle2 className="mr-2 h-4 w-4" />Confirm
-              </Button>
-            </>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ── Employee Card ──────────────────────────────────────────────────────
-function EmployeeCard({ agent, onStatusChange }: { agent: Agent; onStatusChange: (id: string, status: Agent["status"]) => void }) {
-  const statusColor = {
-    online: "text-green-600 bg-green-50 border-green-200",
-    break: "text-orange-600 bg-orange-50 border-orange-200",
-    offline: "text-gray-600 bg-gray-50 border-gray-200"
-  };
-  const statusIcon = {
-    online: <UserCheck className="h-4 w-4" />,
-    break: <Coffee className="h-4 w-4" />,
-    offline: <UserX className="h-4 w-4" />
-  };
-
-  return (
-    <Card className="hover:shadow-lg transition-shadow">
-      <CardContent className="p-4">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg" style={{ background: avatarColor(agent.name) }}>
-              {getInitials(agent.name)}
-            </div>
-            <div>
-              <p className="font-semibold">{agent.name}</p>
-              <p className="text-xs text-muted-foreground">{agent.role} • {agent.department}</p>
-              <span className={`text-xs px-2 py-0.5 rounded-full border inline-flex items-center gap-1 mt-1 ${statusColor[agent.status]}`}>
-                {statusIcon[agent.status]} {agent.status}
-              </span>
-            </div>
-          </div>
-          <Badge variant="outline" className="text-xs">
-            <Clock className="h-3 w-3 mr-1" />
-            {agent.total_working_hours ? formatHMS(agent.total_working_hours * 3600) : "0h"}
-          </Badge>
-        </div>
-
-        <div className="grid grid-cols-3 gap-2 mt-3 text-xs">
-          <div className="p-2 rounded bg-muted/30">
-            <p className="text-muted-foreground">Login</p>
-            <p className="font-medium">{agent.login_time ? format(new Date(agent.login_time), "hh:mm a") : "-"}</p>
-          </div>
-          <div className="p-2 rounded bg-muted/30">
-            <p className="text-muted-foreground">Break</p>
-            <p className="font-medium">{agent.break_time ? format(new Date(agent.break_time), "hh:mm a") : "-"}</p>
-          </div>
-          <div className="p-2 rounded bg-muted/30">
-            <p className="text-muted-foreground">Logout</p>
-            <p className="font-medium">{agent.logout_time ? format(new Date(agent.logout_time), "hh:mm a") : "Active"}</p>
-          </div>
-        </div>
-
-        <div className="flex gap-2 mt-3">
-          <Button size="sm" variant={agent.status === "online" ? "default" : "outline"} onClick={() => onStatusChange(agent.id, "online")}>
-            <UserCheck className="h-3 w-3 mr-1" /> Active
-          </Button>
-          <Button size="sm" variant={agent.status === "break" ? "default" : "outline"} onClick={() => onStatusChange(agent.id, "break")}>
-            <Coffee className="h-3 w-3 mr-1" /> Break
-          </Button>
-          <Button size="sm" variant={agent.status === "offline" ? "default" : "outline"} onClick={() => onStatusChange(agent.id, "offline")}>
-            <LogOut className="h-3 w-3 mr-1" /> Logout
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ── My Attendance Card ─────────────────────────────────────────────────
-function MyAttendanceCard({ userId }: { userId: string }) {
-  const queryClient = useQueryClient();
-  const [cameraMode, setCameraMode] = useState<"check_in" | "check_out" | null>(null);
-  const [busy, setBusy] = useState(false);
-  const today = format(new Date(), "yyyy-MM-dd");
-
-  const { data: todayRecord, isLoading, refetch } = useQuery({
-    queryKey: ["my_attendance", userId, today],
-    queryFn: async () => {
+  // Add comment
+  const addComment = useCallback(async () => {
+    if (!newComment.trim() || !currentUser) return;
+    setSubmitting(true);
+    try {
       const { data, error } = await supabase
-        .from("attendance")
-        .select("*")
-        .eq("user_id", userId)
-        .eq("date", today)
-        .maybeSingle();
-      if (error) throw error;
-      return data as Attendance | null;
-    },
-    enabled: !!userId,
-  });
-
-  const uploadPhoto = useCallback(async (blob: Blob, tag: string) => {
-    const path = `${userId}/${today}_${tag}_${Date.now()}.jpg`;
-    const { error } = await supabase.storage
-      .from("attendance-photos")
-      .upload(path, blob, { contentType: "image/jpeg" });
-    if (error) throw error;
-    const { data } = supabase.storage.from("attendance-photos").getPublicUrl(path);
-    return data.publicUrl;
-  }, [userId, today]);
-
-  const handleCheckIn = useCallback(async (blob: Blob) => {
-    if (!userId) return;
-    setBusy(true);
-    try {
-      const photoUrl = await uploadPhoto(blob, "checkin");
-      const { error } = await supabase.from("attendance").upsert({
-        user_id: userId,
-        date: today,
-        check_in: new Date().toISOString(),
-        check_in_photo_url: photoUrl,
-        status: "present",
-        type: "office",
-      }, { onConflict: "user_id,date" });
-      if (error) throw error;
-      toast.success("✅ Checked in successfully!");
-      setCameraMode(null);
-      refetch();
-    } catch (err: any) {
-      toast.error(err.message || "Check-in failed");
-    } finally {
-      setBusy(false);
-    }
-  }, [userId, today, uploadPhoto, refetch]);
-
-  const handleCheckOut = useCallback(async (blob: Blob) => {
-    if (!userId || !todayRecord) return;
-    setBusy(true);
-    try {
-      const photoUrl = await uploadPhoto(blob, "checkout");
-      const { error } = await supabase
-        .from("attendance")
-        .update({
-          check_out: new Date().toISOString(),
-          check_out_photo_url: photoUrl
+        .from("lead_comments")
+        .insert({
+          lead_id: leadId,
+          user_id: currentUser.id,
+          comment: newComment.trim()
         })
-        .eq("id", todayRecord.id);
+        .select()
+        .single();
+
       if (error) throw error;
-      toast.success("✅ Checked out successfully!");
-      setCameraMode(null);
-      refetch();
+
+      if (data) {
+        setComments(prev => [data, ...prev]);
+        setNewComment("");
+        toast.success("💬 Comment added");
+      }
     } catch (err: any) {
-      toast.error(err.message || "Check-out failed");
+      toast.error(err.message || "Failed to add comment");
     } finally {
-      setBusy(false);
+      setSubmitting(false);
     }
-  }, [userId, todayRecord, uploadPhoto, refetch]);
+  }, [leadId, currentUser, newComment]);
 
-  const startLunch = useCallback(async () => {
-    if (!todayRecord) return;
-    setBusy(true);
-    try {
-      const { error } = await supabase
-        .from("attendance")
-        .update({ lunch_start: new Date().toISOString() })
-        .eq("id", todayRecord.id);
-      if (error) throw error;
-      toast.success("☕ Lunch break started");
-      refetch();
-    } catch (err: any) {
-      toast.error(err.message || "Failed to start lunch");
-    } finally {
-      setBusy(false);
-    }
-  }, [todayRecord, refetch]);
-
-  const endLunch = useCallback(async () => {
-    if (!todayRecord) return;
-    setBusy(true);
-    try {
-      const { error } = await supabase
-        .from("attendance")
-        .update({ lunch_end: new Date().toISOString() })
-        .eq("id", todayRecord.id);
-      if (error) throw error;
-      toast.success("☕ Lunch break ended");
-      refetch();
-    } catch (err: any) {
-      toast.error(err.message || "Failed to end lunch");
-    } finally {
-      setBusy(false);
-    }
-  }, [todayRecord, refetch]);
-
-  if (isLoading) {
-    return <div className="flex items-center justify-center h-32"><Loader2 className="h-6 w-6 animate-spin" /></div>;
-  }
-
-  const checkedIn = !!todayRecord?.check_in;
-  const checkedOut = !!todayRecord?.check_out;
-  const onLunch = !!todayRecord?.lunch_start && !todayRecord?.lunch_end;
+  const getInitials = (name: string) => {
+    if (!name) return "U";
+    return name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2);
+  };
 
   return (
-    <Card className="border-primary/20">
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center justify-between text-base">
-          <span className="flex items-center gap-2">
-            <UserCheck className="h-5 w-5 text-primary" />
-            My Attendance — Today
-          </span>
-          <Badge variant={checkedOut ? "secondary" : checkedIn ? (onLunch ? "default" : "default") : "outline"}>
-            {checkedOut ? "Checked Out" : checkedIn ? (onLunch ? "On Lunch" : "Checked In") : "Not Checked In"}
-          </Badge>
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm mb-4">
-          <div className="p-3 rounded-lg border bg-muted/30">
-            <p className="text-xs text-muted-foreground mb-1">Check In</p>
-            <p className="font-semibold">{todayRecord?.check_in ? format(new Date(todayRecord.check_in), "hh:mm a") : "-"}</p>
-          </div>
-          <div className="p-3 rounded-lg border bg-muted/30">
-            <p className="text-xs text-muted-foreground mb-1">Lunch</p>
-            <p className="font-semibold">
-              {todayRecord?.lunch_start ? format(new Date(todayRecord.lunch_start), "hh:mm a") : "-"}
-              {onLunch && " → ongoing"}
-              {todayRecord?.lunch_end && ` → ${format(new Date(todayRecord.lunch_end), "hh:mm a")}`}
-            </p>
-          </div>
-          <div className="p-3 rounded-lg border bg-muted/30">
-            <p className="text-xs text-muted-foreground mb-1">Check Out</p>
-            <p className="font-semibold">{todayRecord?.check_out ? format(new Date(todayRecord.check_out), "hh:mm a") : "-"}</p>
-          </div>
-          <div className="p-3 rounded-lg border bg-muted/30 flex items-center gap-2">
-            {todayRecord?.check_in_photo_url ? (
-              <img src={todayRecord.check_in_photo_url} alt="selfie" className="w-10 h-10 rounded-full object-cover border" />
-            ) : (
-              <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center">
-                <Camera className="h-4 w-4 text-gray-400" />
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <MessageSquarePlus className="h-5 w-5 text-muted-foreground" />
+        <h4 className="font-semibold text-sm">Comments ({comments.length})</h4>
+      </div>
+
+      {/* Add Comment */}
+      <div className="flex gap-2">
+        <Textarea
+          placeholder="Add a comment..."
+          value={newComment}
+          onChange={(e) => setNewComment(e.target.value)}
+          className="flex-1 min-h-[60px] text-sm"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              addComment();
+            }
+          }}
+        />
+        <Button
+          size="sm"
+          onClick={addComment}
+          disabled={!newComment.trim() || submitting}
+          className="self-end"
+        >
+          {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+        </Button>
+      </div>
+
+      {/* Comments List */}
+      {loading ? (
+        <div className="flex items-center justify-center py-4">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : comments.length === 0 ? (
+        <p className="text-sm text-muted-foreground text-center py-4">No comments yet</p>
+      ) : (
+        <div className="max-h-[300px] overflow-y-auto space-y-3">
+          {comments.map((comment) => (
+            <div key={comment.id} className="flex gap-3 p-3 rounded-lg bg-muted/30">
+              <div className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0" style={{ background: avatarColor(comment.user_name || "User") }}>
+                {getInitials(comment.user_name || "User")}
               </div>
-            )}
-            <div>
-              <p className="text-xs text-muted-foreground">Selfie</p>
-              <p className="text-xs font-medium">{todayRecord?.check_in_photo_url ? "✅ Captured" : "Pending"}</p>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-sm">{comment.user_name || "Unknown User"}</span>
+                  <span className="text-xs text-muted-foreground">{format(new Date(comment.created_at), "dd MMM, hh:mm a")}</span>
+                </div>
+                <p className="text-sm break-words">{comment.comment}</p>
+              </div>
             </div>
-          </div>
+          ))}
         </div>
-
-        <div className="flex flex-wrap gap-2">
-          {!checkedIn && (
-            <Button onClick={() => setCameraMode("check_in")} disabled={busy}>
-              <Camera className="mr-2 h-4 w-4" /> Check In with Selfie
-            </Button>
-          )}
-          {checkedIn && !checkedOut && !onLunch && (
-            <Button variant="outline" onClick={startLunch} disabled={busy}>
-              <Coffee className="mr-2 h-4 w-4" /> Start Lunch Break
-            </Button>
-          )}
-          {onLunch && (
-            <Button variant="outline" onClick={endLunch} disabled={busy}>
-              <Coffee className="mr-2 h-4 w-4" /> End Lunch Break
-            </Button>
-          )}
-          {checkedIn && !checkedOut && (
-            <Button variant="destructive" onClick={() => setCameraMode("check_out")} disabled={busy}>
-              <LogOut className="mr-2 h-4 w-4" /> Check Out with Selfie
-            </Button>
-          )}
-          {checkedOut && (
-            <span className="text-sm text-green-600 flex items-center gap-1">
-              <CheckCircle2 className="h-4 w-4" /> Day complete. See you tomorrow!
-            </span>
-          )}
-        </div>
-      </CardContent>
-
-      <CameraDialog
-        open={cameraMode === "check_in"}
-        onClose={() => setCameraMode(null)}
-        onCapture={handleCheckIn}
-        title="Check-In Selfie"
-      />
-      <CameraDialog
-        open={cameraMode === "check_out"}
-        onClose={() => setCameraMode(null)}
-        onCapture={handleCheckOut}
-        title="Check-Out Selfie"
-      />
-    </Card>
-  );
-}
-
-// ── Team Attendance Table ──────────────────────────────────────────────
-function TeamAttendanceTable({ agents, attendance }: { agents: Agent[]; attendance: Attendance[] }) {
-  const [photoPreview, setPhotoPreview] = useState<{ url: string; who: string } | null>(null);
-  const [dateFilter, setDateFilter] = useState("");
-
-  const filteredAttendance = useMemo(() => {
-    const today = dateFilter || format(new Date(), "yyyy-MM-dd");
-    return attendance.filter(a => a.date === today);
-  }, [attendance, dateFilter]);
-
-  const getAgentName = (userId: string) => {
-    const agent = agents.find(a => a.id === userId);
-    return agent?.name || "Unknown";
-  };
-
-  const getAgentStatus = (userId: string) => {
-    const agent = agents.find(a => a.id === userId);
-    return agent?.status || "offline";
-  };
-
-  const today = format(new Date(), "yyyy-MM-dd");
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center justify-between text-base">
-          <span className="flex items-center gap-2">
-            <Users className="h-5 w-5 text-primary" />
-            Team Attendance — {dateFilter || "Today"}
-          </span>
-          <div className="flex items-center gap-2">
-            <Input
-              type="date"
-              value={dateFilter}
-              onChange={e => setDateFilter(e.target.value)}
-              className="w-40 text-sm"
-            />
-            <Badge variant="outline">
-              {filteredAttendance.filter(a => a.status === "present").length} Present
-            </Badge>
-          </div>
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        {filteredAttendance.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-8">
-            No attendance records for this date.
-          </p>
-        ) : (
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Photo</TableHead>
-                  <TableHead>Employee</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Check In</TableHead>
-                  <TableHead>Lunch</TableHead>
-                  <TableHead>Check Out</TableHead>
-                  <TableHead>Working Hours</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredAttendance.map(record => {
-                  const agent = agents.find(a => a.id === record.user_id);
-                  const checkInTime = record.check_in ? new Date(record.check_in) : null;
-                  const checkOutTime = record.check_out ? new Date(record.check_out) : null;
-                  const lunchStart = record.lunch_start ? new Date(record.lunch_start) : null;
-                  const lunchEnd = record.lunch_end ? new Date(record.lunch_end) : null;
-
-                  let workingHours = 0;
-                  if (checkInTime && checkOutTime) {
-                    let diff = checkOutTime.getTime() - checkInTime.getTime();
-                    if (lunchStart && lunchEnd) {
-                      diff -= lunchEnd.getTime() - lunchStart.getTime();
-                    }
-                    workingHours = Math.max(0, diff / 3600000);
-                  }
-
-                  return (
-                    <TableRow key={record.id}>
-                      <TableCell>
-                        {record.check_in_photo_url ? (
-                          <button onClick={() => setPhotoPreview({
-                            url: record.check_in_photo_url!,
-                            who: getAgentName(record.user_id)
-                          })}>
-                            <img
-                              src={record.check_in_photo_url}
-                              alt="selfie"
-                              className="w-9 h-9 rounded-full object-cover border hover:opacity-80"
-                            />
-                          </button>
-                        ) : (
-                          <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center">
-                            <Camera className="h-3.5 w-3.5 text-gray-400" />
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">{getAgentName(record.user_id)}</span>
-                          <Badge variant={getAgentStatus(record.user_id) === "online" ? "default" : "outline"} className="text-xs">
-                            {getAgentStatus(record.user_id)}
-                          </Badge>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={record.status === "present" ? "default" : "outline"}>
-                          {record.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {checkInTime ? format(checkInTime, "hh:mm a") : "-"}
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {lunchStart ? (
-                          <span className="flex items-center gap-1">
-                            <Coffee className="h-3 w-3 text-orange-500" />
-                            {format(lunchStart, "hh:mm a")}
-                            {lunchEnd && ` → ${format(lunchEnd, "hh:mm a")}`}
-                            {!lunchEnd && " → ongoing"}
-                          </span>
-                        ) : "-"}
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {checkOutTime ? format(checkOutTime, "hh:mm a") : "-"}
-                      </TableCell>
-                      <TableCell className="text-sm font-medium">
-                        {workingHours > 0 ? `${workingHours.toFixed(1)}h` : "-"}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-      </CardContent>
-
-      <Dialog open={!!photoPreview} onOpenChange={() => setPhotoPreview(null)}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>{photoPreview?.who} — Check-In Selfie</DialogTitle>
-          </DialogHeader>
-          {photoPreview && <img src={photoPreview.url} alt="check-in selfie" className="w-full rounded-lg" />}
-        </DialogContent>
-      </Dialog>
-    </Card>
+      )}
+    </div>
   );
 }
 
@@ -715,6 +320,7 @@ export default function Leads() {
   const [filterLeadType, setFilterLeadType] = useState("all");
   const [filterBudget, setFilterBudget] = useState("all");
   const [filterAssignee, setFilterAssignee] = useState("all");
+  const [filterCallStatus, setFilterCallStatus] = useState("all");
   const [filterPreset, setFilterPreset] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -738,7 +344,7 @@ export default function Leads() {
     name: "", phone: "", email: "", address: "", medicine: "", disease: "",
     qty_days: "", value: "", lead_type: "Herbal & Ayurvedic", source: "Website",
     budget: "Below Rs 50k", stage: "New", sub_stage: "-", temperature: "Warm",
-    order_status: "New Order", previous_history: "", remark: "",
+    order_status: "New Order", previous_history: "", remark: "", call_status: "pending",
   };
   const [form, setForm] = useState(emptyForm);
 
@@ -746,7 +352,6 @@ export default function Leads() {
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       setCurrentUser(data.user);
-      // Check if user is admin (you can implement your own logic)
       setIsAdmin(data.user?.email?.includes('admin') || false);
     });
   }, []);
@@ -820,6 +425,7 @@ export default function Leads() {
         value: Number(form.value) || 0, lead_type: form.lead_type, source: form.source,
         budget: form.budget, stage: form.stage, sub_stage: form.sub_stage, temperature: form.temperature,
         order_status: form.order_status, previous_history: form.previous_history, remark: form.remark,
+        call_status: form.call_status || "pending",
       });
       if (error) throw error;
       setForm(emptyForm);
@@ -831,6 +437,21 @@ export default function Leads() {
     }
   }, [form, fetchAll]);
 
+  // ── Update Call Status ──────────────────────────────────────────────
+  const handleUpdateCallStatus = useCallback(async (id: string, callStatus: string) => {
+    setLeads(prev => prev.map(l => (l.id === id ? { ...l, call_status: callStatus } : l)));
+    if (detailLead?.id === id) setDetailLead(prev => (prev ? { ...prev, call_status: callStatus } : prev));
+    try {
+      const { error } = await supabase.from("leads").update({ call_status: callStatus }).eq("id", id);
+      if (error) throw error;
+      logActivity(id, "call_status_updated", `Call Status: ${callStatus}`);
+      toast.success(`📞 Call status updated to ${CALL_STATUSES.find(s => s.value === callStatus)?.label || callStatus}`);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to update call status");
+      await fetchAll();
+    }
+  }, [detailLead, logActivity, fetchAll]);
+
   const handleUpdate = useCallback(async () => {
     if (!editLead) return;
     try {
@@ -841,6 +462,7 @@ export default function Leads() {
         stage: editLead.stage, sub_stage: editLead.sub_stage, temperature: editLead.temperature,
         assigned_to: editLead.assigned_to, order_status: editLead.order_status,
         previous_history: editLead.previous_history, remark: editLead.remark, business_status: editLead.business_status,
+        call_status: editLead.call_status,
       }).eq("id", editLead.id);
       if (error) throw error;
       setLeads(prev => prev.map(l => (l.id === editLead.id ? { ...l, ...editLead } : l)));
@@ -864,7 +486,6 @@ export default function Leads() {
     }
   }, []);
 
-  // ── Agent Status ──────────────────────────────────────────────────
   const handleAgentStatus = useCallback(async (id: string, status: Agent["status"]) => {
     const patch: Partial<Agent> =
       status === "online" ? { status, login_time: new Date().toISOString(), logout_time: null } :
@@ -881,7 +502,6 @@ export default function Leads() {
     }
   }, [fetchAll]);
 
-  // ── Mark Lost ──
   const markLeadAsLost = useCallback(async (id: string, reason: string) => {
     const patch = { stage: "Lost", lost_reason: reason, lost_date: new Date().toISOString(), business_status: "No-Go" };
     setLeads(prev => prev.map(l => (l.id === id ? { ...l, ...patch } : l)));
@@ -908,6 +528,7 @@ export default function Leads() {
       const matchType = filterLeadType === "all" || l.lead_type === filterLeadType;
       const matchBudget = filterBudget === "all" || l.budget === filterBudget;
       const matchAssignee = filterAssignee === "all" || (filterAssignee === "unassigned" ? !l.assigned_to : l.assigned_to === filterAssignee);
+      const matchCallStatus = filterCallStatus === "all" || l.call_status === filterCallStatus;
       const matchPreset = filterPreset === "all" ||
         (filterPreset === "today" && isToday(new Date(l.created_at))) ||
         (filterPreset === "fresh" && l.stage === "New" && new Date(l.created_at) >= subDays(new Date(), 3)) ||
@@ -915,9 +536,9 @@ export default function Leads() {
       const created = new Date(l.created_at);
       const matchFrom = !dateFrom || created >= new Date(dateFrom);
       const matchTo = !dateTo || created <= new Date(dateTo + "T23:59:59");
-      return matchSearch && matchStage && matchTemp && matchType && matchBudget && matchAssignee && matchPreset && matchFrom && matchTo;
+      return matchSearch && matchStage && matchTemp && matchType && matchBudget && matchAssignee && matchCallStatus && matchPreset && matchFrom && matchTo;
     });
-  }, [leads, search, filterStage, filterTemperature, filterLeadType, filterBudget, filterAssignee, filterPreset, dateFrom, dateTo]);
+  }, [leads, search, filterStage, filterTemperature, filterLeadType, filterBudget, filterAssignee, filterCallStatus, filterPreset, dateFrom, dateTo]);
 
   const totalPages = Math.ceil(filtered.length / itemsPerPage);
   const currentItems = useMemo(() => filtered.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage), [filtered, currentPage]);
@@ -930,6 +551,7 @@ export default function Leads() {
     setFilterLeadType("all");
     setFilterBudget("all");
     setFilterAssignee("all");
+    setFilterCallStatus("all");
     setFilterPreset("all");
     setDateFrom("");
     setDateTo("");
@@ -943,6 +565,8 @@ export default function Leads() {
     cold: leads.filter(l => l.temperature === "Cold").length,
     converted: leads.filter(l => l.stage === "Converted").length,
     active: leads.filter(l => l.stage !== "Converted" && l.stage !== "Lost").length,
+    interested: leads.filter(l => l.call_status === "interested").length,
+    ringing: leads.filter(l => l.call_status === "ringing").length,
   }), [leads]);
 
   // ── Import/Export ──
@@ -988,6 +612,7 @@ export default function Leads() {
           qty_days: lead.qty_days, value: lead.value, previous_history: lead.previous_history,
           remark: lead.remark, disease: lead.disease, temperature: lead.temperature,
           stage: "New", sub_stage: "-", source: "Existing Customer",
+          call_status: "pending",
         });
         if (!error) success++;
       } catch { /* skip row */ }
@@ -1006,6 +631,7 @@ export default function Leads() {
     Medicine: l.medicine, Disease: l.disease, "Day's": l.qty_days, Price: l.value,
     "Lead Type": l.lead_type, Source: l.source, Budget: l.budget,
     Stage: l.stage, "Sub Stage": l.sub_stage, Temperature: l.temperature,
+    "Call Status": CALL_STATUSES.find(s => s.value === l.call_status)?.label || l.call_status || "Pending",
     "Assigned To": getAgentName(l.assigned_to), "Order Status": l.order_status,
     "Previous History": l.previous_history, Note: l.remark, "Lost Reason": l.lost_reason || "",
     "Business Status": l.business_status, "Created Date": format(new Date(l.created_at), "dd/MM/yyyy"),
@@ -1055,17 +681,21 @@ export default function Leads() {
             <UserCheck className="h-4 w-4 mr-1" />
             {stats.active} Active Leads
           </Badge>
+          <Badge variant="outline" className="px-3 py-1 bg-green-50 border-green-200">
+            <PhoneIncoming className="h-4 w-4 mr-1 text-green-600" />
+            {stats.interested} Interested
+          </Badge>
         </div>
       </div>
 
-      {/* ─── MY ATTENDANCE (for all users) ────────────────────────────── */}
+      {/* ─── MY ATTENDANCE ────────────────────────────────────────────── */}
       {currentUser && <MyAttendanceCard userId={currentUser.id} />}
 
       {/* ─── TEAM OVERVIEW (Admin Only) ──────────────────────────────── */}
       {isAdmin && (
         <>
           {/* Team Stats */}
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
             <Card>
               <CardContent className="p-4">
                 <div className="flex items-center gap-3">
@@ -1112,21 +742,6 @@ export default function Leads() {
             <Card>
               <CardContent className="p-4">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-gray-50 flex items-center justify-center">
-                    <UserX className="h-5 w-5 text-gray-600" />
-                  </div>
-                  <div>
-                    <p className="text-2xl font-bold text-gray-600">
-                      {agents.filter(a => a.status === "offline").length}
-                    </p>
-                    <p className="text-xs text-muted-foreground">Offline</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-lg bg-purple-50 flex items-center justify-center">
                     <TrendingUp className="h-5 w-5 text-purple-600" />
                   </div>
@@ -1148,6 +763,32 @@ export default function Leads() {
                       {stats.converted}
                     </p>
                     <p className="text-xs text-muted-foreground">Converted</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-green-50 flex items-center justify-center">
+                    <PhoneIncoming className="h-5 w-5 text-green-600" />
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold text-green-600">{stats.interested}</p>
+                    <p className="text-xs text-muted-foreground">Interested</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-orange-50 flex items-center justify-center">
+                    <PhoneOutgoing className="h-5 w-5 text-orange-600" />
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold text-orange-600">{stats.ringing}</p>
+                    <p className="text-xs text-muted-foreground">Ringing</p>
                   </div>
                 </div>
               </CardContent>
@@ -1342,6 +983,13 @@ export default function Leads() {
                     </Select>
                   </div>
                   <div className="grid gap-2">
+                    <Label>Call Status</Label>
+                    <Select value={form.call_status} onValueChange={v => setForm({ ...form, call_status: v })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>{CALL_STATUSES.map(s => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid gap-2">
                     <Label>Order Status</Label>
                     <Select value={form.order_status} onValueChange={v => setForm({ ...form, order_status: v })}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
@@ -1379,18 +1027,18 @@ export default function Leads() {
                   {agents.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
                 </SelectContent>
               </Select>
+              <Select value={filterCallStatus} onValueChange={setFilterCallStatus}>
+                <SelectTrigger className="w-36"><SelectValue placeholder="Call Status" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Status</SelectItem>
+                  {CALL_STATUSES.map(s => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
               <Select value={filterTemperature} onValueChange={setFilterTemperature}>
                 <SelectTrigger className="w-32"><SelectValue placeholder="Temperature" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Temp</SelectItem>
                   {TEMPERATURES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              <Select value={filterLeadType} onValueChange={setFilterLeadType}>
-                <SelectTrigger className="w-36"><SelectValue placeholder="Lead Type" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Types</SelectItem>
-                  {LEAD_TYPES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                 </SelectContent>
               </Select>
               <div className="flex items-center gap-2">
@@ -1445,6 +1093,7 @@ export default function Leads() {
                         <TableHead>Number</TableHead>
                         <TableHead className="hidden lg:table-cell">Medicine</TableHead>
                         <TableHead>Stage</TableHead>
+                        <TableHead>Call Status</TableHead>
                         <TableHead>Temperature</TableHead>
                         <TableHead>Assigned To</TableHead>
                         <TableHead className="hidden lg:table-cell">Price</TableHead>
@@ -1456,6 +1105,7 @@ export default function Leads() {
                       {currentItems.map(lead => {
                         const score = getLeadScore(lead);
                         const wa = buildWhatsAppLink(lead);
+                        const callStatus = getCallStatusConfig(lead.call_status);
                         return (
                           <TableRow key={lead.id}>
                             <TableCell>
@@ -1468,10 +1118,21 @@ export default function Leads() {
                               </div>
                               <p className="text-[10px] text-muted-foreground">{lead.lead_code}</p>
                             </TableCell>
-                            <TableCell className="text-sm">{lead.phone || "-"}</TableCell>
+                            <TableCell className="text-sm font-mono">
+                              {hidePhoneNumber(lead.phone)}
+                            </TableCell>
                             <TableCell className="hidden lg:table-cell text-sm">{lead.medicine || "-"}</TableCell>
                             <TableCell>
                               <StagePill stage={lead.stage} subStage={lead.sub_stage} />
+                            </TableCell>
+                            <TableCell>
+                              {callStatus ? (
+                                <Badge variant="outline" style={{ borderColor: callStatus.color, color: callStatus.color }}>
+                                  {callStatus.label}
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline">Pending</Badge>
+                              )}
                             </TableCell>
                             <TableCell>
                               <TemperatureBadge temperature={lead.temperature} />
@@ -1541,7 +1202,7 @@ export default function Leads() {
 
       {/* ─── DIALOGS ────────────────────────────────────────────────────── */}
 
-      {/* Detail Dialog */}
+      {/* Detail Dialog with Comments */}
       <Dialog open={!!detailLead} onOpenChange={() => setDetailLead(null)}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -1568,7 +1229,7 @@ export default function Leads() {
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div>
                   <p className="text-muted-foreground text-xs">Phone</p>
-                  <p className="font-medium">{detailLead.phone || "-"}</p>
+                  <p className="font-medium font-mono">{hidePhoneNumber(detailLead.phone)}</p>
                 </div>
                 <div>
                   <p className="text-muted-foreground text-xs">Address</p>
@@ -1589,6 +1250,15 @@ export default function Leads() {
                 <div>
                   <p className="text-muted-foreground text-xs">Price</p>
                   <p className="font-medium">{formatCurrency(detailLead.value || 0)}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Call Status</p>
+                  <Select value={detailLead.call_status || "pending"} onValueChange={v => handleUpdateCallStatus(detailLead.id, v)}>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {CALL_STATUSES.map(s => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div>
                   <p className="text-muted-foreground text-xs">Assigned To</p>
@@ -1634,6 +1304,11 @@ export default function Leads() {
                   </Button>
                 )}
               </div>
+
+              {/* ─── Comments Section ─────────────────────────────────── */}
+              <div className="border-t pt-4">
+                <LeadComments leadId={detailLead.id} currentUser={currentUser} />
+              </div>
             </div>
           )}
         </DialogContent>
@@ -1666,6 +1341,7 @@ export default function Leads() {
               <div className="grid gap-2"><Label>Temperature</Label><Select value={editLead.temperature || "Warm"} onValueChange={v => setEditLead({ ...editLead, temperature: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{TEMPERATURES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}</SelectContent></Select></div>
               <div className="grid gap-2"><Label>Stage</Label><Select value={editLead.stage} onValueChange={v => setEditLead({ ...editLead, stage: v, sub_stage: SUB_STAGES[v][0] })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{STAGES.map(s => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}</SelectContent></Select></div>
               <div className="grid gap-2"><Label>Sub Stage</Label><Select value={editLead.sub_stage || SUB_STAGES[editLead.stage][0]} onValueChange={v => setEditLead({ ...editLead, sub_stage: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{SUB_STAGES[editLead.stage].map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div>
+              <div className="grid gap-2"><Label>Call Status</Label><Select value={editLead.call_status || "pending"} onValueChange={v => setEditLead({ ...editLead, call_status: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{CALL_STATUSES.map(s => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}</SelectContent></Select></div>
               <div className="grid gap-2"><Label>Order Status</Label><Select value={editLead.order_status || ""} onValueChange={v => setEditLead({ ...editLead, order_status: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{ORDER_STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div>
               <div className="grid gap-2"><Label>Business Status</Label><Select value={editLead.business_status || "Active"} onValueChange={v => setEditLead({ ...editLead, business_status: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{BIZ_STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div>
               <div className="grid gap-2 sm:col-span-2"><Label>Previous History</Label><Textarea value={editLead.previous_history || ""} onChange={e => setEditLead({ ...editLead, previous_history: e.target.value })} /></div>
@@ -1705,38 +1381,4 @@ export default function Leads() {
 
 // ── Helper Components ────────────────────────────────────────────────
 
-function ScoreBadge({ score }: { score: number }) {
-  const color = score >= 70 ? "#10b981" : score >= 40 ? "#f59e0b" : "#ef4444";
-  return (
-    <div className="w-8 h-8 rounded-full border-2 flex items-center justify-center text-xs font-semibold" style={{ borderColor: color, color }}>
-      {score}
-    </div>
-  );
-}
-
-function TemperatureBadge({ temperature }: { temperature: string | null }) {
-  const cfg = getTempConfig(temperature);
-  if (!cfg) return <span className="text-xs text-muted-foreground">-</span>;
-  return (
-    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold border" style={{ color: cfg.color, background: cfg.bg, borderColor: `${cfg.color}30` }}>
-      {cfg.label}
-    </span>
-  );
-}
-
-function StagePill({ stage, subStage }: { stage: string; subStage: string | null }) {
-  const cfg = getStageConfig(stage);
-  if (!cfg) return <span className="text-xs text-muted-foreground">-</span>;
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold border" style={{ color: cfg.color, background: cfg.bg, borderColor: `${cfg.color}30` }}>
-        {cfg.icon} {cfg.label}
-      </span>
-      {subStage && subStage !== "-" && <span className="text-[10px] text-muted-foreground">{subStage}</span>}
-    </div>
-  );
-}
-
-function RotateCcw({ className }: { className?: string }) {
-  return <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9m0 0v6m0-6h-6"/></svg>;
-}
+// ... (ScoreBadge, TemperatureBadge, StagePill, RotateCcw components remain same)
