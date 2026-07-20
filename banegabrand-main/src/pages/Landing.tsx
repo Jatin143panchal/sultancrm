@@ -75,7 +75,7 @@ export default function Landing() {
             <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-primary to-accent flex items-center justify-center">
               <Sparkles className="w-5 h-5 text-primary-foreground" />
             </div>
-            <span className="font-bold text-lg">BanegaBrand CRM</span>
+            <span className="font-bold text-lg">SultanWellness</span>
           </div>
           <nav className="hidden md:flex items-center gap-6 text-sm text-muted-foreground">
             <a href="#features" className="hover:text-foreground transition">Features</a>
@@ -94,7 +94,9 @@ export default function Landing() {
         <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-background to-accent/10" />
         <div className="container mx-auto px-4 py-20 md:py-28 relative">
           <div className="max-w-3xl mx-auto text-center">
-            <Badge className="mb-4" variant="secondary">Built for BanegaBrand Pvt Ltd</Badge>
+            <Badge className="mb-4" variant="secondary" style={{ fontSize: '14px', padding: '6px 16px' }}>
+              🚀 Jatin & Sahil Organization
+            </Badge>
             <h1 className="text-4xl md:text-6xl font-bold tracking-tight mb-6">
               The complete <span className="bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">Sales & HR CRM</span> for modern teams
             </h1>
@@ -132,6 +134,28 @@ export default function Landing() {
               </CardHeader>
             </Card>
           ))}
+        </div>
+      </section>
+
+      {/* Stats / Trust Badges */}
+      <section className="container mx-auto px-4 py-12">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 max-w-4xl mx-auto">
+          <div className="text-center">
+            <div className="text-3xl font-bold text-primary">500+</div>
+            <div className="text-sm text-muted-foreground">Active Users</div>
+          </div>
+          <div className="text-center">
+            <div className="text-3xl font-bold text-primary">50+</div>
+            <div className="text-sm text-muted-foreground">Companies</div>
+          </div>
+          <div className="text-center">
+            <div className="text-3xl font-bold text-primary">1000+</div>
+            <div className="text-sm text-muted-foreground">Leads Managed</div>
+          </div>
+          <div className="text-center">
+            <div className="text-3xl font-bold text-primary">98%</div>
+            <div className="text-sm text-muted-foreground">Satisfaction Rate</div>
+          </div>
         </div>
       </section>
 
@@ -180,8 +204,14 @@ export default function Landing() {
         <Card className="bg-gradient-to-br from-primary to-accent border-0 text-primary-foreground">
           <CardContent className="p-10 md:p-16 text-center">
             <h2 className="text-3xl md:text-4xl font-bold mb-4">Ready to transform your business?</h2>
-            <p className="opacity-90 mb-6 max-w-xl mx-auto">Join BanegaBrand teams already managing sales, HR and operations on one platform.</p>
-            <Link to="/auth"><Button size="lg" variant="secondary" className="gap-2">Get Started Free <ArrowRight className="w-4 h-4" /></Button></Link>
+            <p className="opacity-90 mb-6 max-w-xl mx-auto">
+              Join <strong>Jatin & Sahil Organization</strong> teams already managing sales, HR and operations on one platform.
+            </p>
+            <Link to="/auth">
+              <Button size="lg" variant="secondary" className="gap-2">
+                Get Started Free <ArrowRight className="w-4 h-4" />
+              </Button>
+            </Link>
           </CardContent>
         </Card>
       </section>
@@ -189,11 +219,14 @@ export default function Landing() {
       {/* Footer */}
       <footer className="border-t border-border py-8">
         <div className="container mx-auto px-4 flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-muted-foreground">
-          <div>© {new Date().getFullYear()} BanegaBrand Pvt Ltd. All rights reserved.</div>
+          <div className="text-center md:text-left">
+            <div>© {new Date().getFullYear()} SultanWellness. All rights reserved.</div>
+            <div className="text-xs opacity-70 mt-1">A Jatin & Sahil Organization Initiative</div>
+          </div>
           <div className="flex gap-6">
-            <a href="#features" className="hover:text-foreground">Features</a>
-            <a href="#pricing" className="hover:text-foreground">Pricing</a>
-            <Link to="/auth" className="hover:text-foreground">Login</Link>
+            <a href="#features" className="hover:text-foreground transition">Features</a>
+            <a href="#pricing" className="hover:text-foreground transition">Pricing</a>
+            <Link to="/auth" className="hover:text-foreground transition">Login</Link>
           </div>
         </div>
       </footer>
