@@ -1802,23 +1802,20 @@ export default function Leads() {
                 {showOnlyMine ? "Showing: My Leads" : "Show My Leads Only"}
               </Button>
             )}
-            {isAdmin && (
-              <div className="flex items-center gap-1.5">
-                <Select value={exportStage} onValueChange={setExportStage}>
-                  <SelectTrigger className="w-36 h-9"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Stages</SelectItem>
-                    {STAGES.map(s => <SelectItem key={s.value} value={s.value}>{s.icon} {s.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <Button variant="outline" size="sm" onClick={() => handleExportByStage(exportStage)}>
-                  <Download className="mr-2 h-4 w-4" />Export
-                </Button>
-              </div>
-            )}
+            <div className="flex items-center gap-1.5">
+              <Select value={exportStage} onValueChange={setExportStage}>
+                <SelectTrigger className="w-36 h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Stages</SelectItem>
+                  {STAGES.map(s => <SelectItem key={s.value} value={s.value}>{s.icon} {s.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Button variant="outline" size="sm" onClick={() => handleExportByStage(exportStage)}>
+                <Download className="mr-2 h-4 w-4" />Export
+              </Button>
+            </div>
 
-            {/* Import Dialog — Admin only */}
-            {isAdmin && (
+            {/* Import Dialog — visible to all users */}
             <Dialog open={uploadOpen} onOpenChange={o => {
               setUploadOpen(o);
               if (!o) { setUploadPreview([]);
@@ -1899,10 +1896,8 @@ export default function Leads() {
                 </DialogFooter>
               </DialogContent>
             </Dialog>
-            )}
 
-            {/* Add Lead Dialog — Admin only */}
-            {isAdmin && (
+            {/* Add Lead Dialog — visible to all users */}
             <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
               <DialogTrigger asChild>
                 <Button size="sm">
@@ -1995,7 +1990,6 @@ export default function Leads() {
                 </div>
               </DialogContent>
             </Dialog>
-            )}
           </div>
         </div>
 
