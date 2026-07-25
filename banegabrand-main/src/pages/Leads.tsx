@@ -1,4 +1,4 @@
-// src/components/Leads.tsx - Complete Working Version
+// src/components/Leads.tsx - Complete Working Version with Comments & Stage Fixes
 
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,10 +26,6 @@ import {
 import { isToday, subDays, format } from "date-fns";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
-import {
-  BarChart as ReBarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart as RePieChart, Pie, Cell, Legend, LineChart, Line,
-} from "recharts";
 
 // ── Types ───────────────────────────────────────────────────────────────
 
@@ -71,6 +67,7 @@ interface LeadComment {
   user_id: string;
   comment: string;
   created_at: string;
+  updated_at: string;
   user_name?: string;
 }
 
@@ -332,6 +329,181 @@ function CameraDialog({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ── Lead Comments Component (FIXED) ─────────────────────────────────────────────
+function LeadComments({ leadId, currentUser }: { leadId: string; currentUser: any }) {
+  const [comments, setComments] = useState<LeadComment[]>([]);
+  const [newComment, setNewComment] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const fetchComments = useCallback(async () => {
+    if (!leadId) return;
+    setLoading(true);
+    try {
+      // Get comments for this lead
+      const { data: commentsData, error: commentsError } = await supabase
+        .from("lead_comments")
+        .select("*")
+        .eq("lead_id", leadId)
+        .order("created_at", { ascending: false });
+
+      if (commentsError) {
+        console.error("Fetch comments error:", commentsError);
+        throw commentsError;
+      }
+
+      if (commentsData && commentsData.length > 0) {
+        // Get user info for each comment
+        const userIds = [...new Set(commentsData.map(c => c.user_id))];
+        const { data: users, error: usersError } = await supabase
+          .from("agents")
+          .select("id, name")
+          .in("id", userIds);
+
+        if (usersError) {
+          console.error("Fetch users error:", usersError);
+        }
+
+        const userMap = new Map();
+        users?.forEach(u => userMap.set(u.id, u.name));
+
+        const formattedComments = commentsData.map(comment => ({
+          ...comment,
+          user_name: userMap.get(comment.user_id) || "Unknown User"
+        }));
+
+        setComments(formattedComments);
+      } else {
+        setComments([]);
+      }
+    } catch (err: any) {
+      console.error("Error in fetchComments:", err);
+      toast.error("Failed to load comments");
+    } finally {
+      setLoading(false);
+    }
+  }, [leadId]);
+
+  useEffect(() => {
+    if (leadId) {
+      fetchComments();
+    }
+  }, [leadId, fetchComments]);
+
+  const addComment = useCallback(async () => {
+    if (!newComment.trim() || !currentUser) {
+      toast.error("Please enter a comment");
+      return;
+    }
+    
+    setSubmitting(true);
+    try {
+      const commentData = {
+        lead_id: leadId,
+        user_id: currentUser.id,
+        comment: newComment.trim()
+      };
+
+      console.log("Adding comment:", commentData);
+
+      const { data, error } = await supabase
+        .from("lead_comments")
+        .insert(commentData)
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Add comment error:", error);
+        throw error;
+      }
+
+      if (data) {
+        // Get the user's name
+        const { data: userData } = await supabase
+          .from("agents")
+          .select("name")
+          .eq("id", data.user_id)
+          .single();
+
+        const newCommentWithUser = {
+          ...data,
+          user_name: userData?.name || "Current User"
+        };
+
+        setComments(prev => [newCommentWithUser, ...prev]);
+        setNewComment("");
+        toast.success("💬 Comment added successfully");
+      }
+    } catch (err: any) {
+      console.error("Add comment error:", err);
+      toast.error(err.message || "Failed to add comment");
+    } finally {
+      setSubmitting(false);
+    }
+  }, [leadId, currentUser, newComment]);
+
+  const getUserName = (comment: LeadComment) => {
+    return comment.user_name || "Unknown User";
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <MessageSquarePlus className="h-5 w-5 text-muted-foreground" />
+        <h4 className="font-semibold text-sm">Comments ({comments.length})</h4>
+      </div>
+
+      <div className="flex gap-2">
+        <Textarea
+          placeholder="Add a comment..."
+          value={newComment}
+          onChange={(e) => setNewComment(e.target.value)}
+          className="flex-1 min-h-[60px] text-sm"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              addComment();
+            }
+          }}
+        />
+        <Button
+          size="sm"
+          onClick={addComment}
+          disabled={!newComment.trim() || submitting}
+          className="self-end"
+        >
+          {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+        </Button>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-4">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : comments.length === 0 ? (
+        <p className="text-sm text-muted-foreground text-center py-4">No comments yet</p>
+      ) : (
+        <div className="max-h-[300px] overflow-y-auto space-y-3">
+          {comments.map((comment) => (
+            <div key={comment.id} className="flex gap-3 p-3 rounded-lg bg-muted/30">
+              <div className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0" style={{ background: avatarColor(getUserName(comment)) }}>
+                {getInitials(getUserName(comment))}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-sm">{getUserName(comment)}</span>
+                  <span className="text-xs text-muted-foreground">{format(new Date(comment.created_at), "dd MMM, hh:mm a")}</span>
+                </div>
+                <p className="text-sm break-words">{comment.comment}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -764,128 +936,6 @@ function TeamAttendanceTable({ agents, attendance }: { agents: Agent[]; attendan
   );
 }
 
-// ── Lead Comments Component ─────────────────────────────────────────────
-function LeadComments({ leadId, currentUser }: { leadId: string; currentUser: any }) {
-  const [comments, setComments] = useState<LeadComment[]>([]);
-  const [newComment, setNewComment] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-
-  const fetchComments = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from("lead_comments")
-        .select(`
-          *,
-          profiles:user_id (display_name)
-        `)
-        .eq("lead_id", leadId)
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
-      setComments(data || []);
-    } catch (err: any) {
-      console.error("Error fetching comments:", err);
-    } finally {
-      setLoading(false);
-    }
-  }, [leadId]);
-
-  useEffect(() => {
-    if (leadId) fetchComments();
-  }, [leadId, fetchComments]);
-
-  const addComment = useCallback(async () => {
-    if (!newComment.trim() || !currentUser) return;
-    setSubmitting(true);
-    try {
-      const { data, error } = await supabase
-        .from("lead_comments")
-        .insert({
-          lead_id: leadId,
-          user_id: currentUser.id,
-          comment: newComment.trim()
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      if (data) {
-        setComments(prev => [data, ...prev]);
-        setNewComment("");
-        toast.success("💬 Comment added");
-      }
-    } catch (err: any) {
-      toast.error(err.message || "Failed to add comment");
-    } finally {
-      setSubmitting(false);
-    }
-  }, [leadId, currentUser, newComment]);
-
-  const getUserName = (comment: LeadComment) => {
-    return (comment as any).profiles?.display_name || "Unknown User";
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <MessageSquarePlus className="h-5 w-5 text-muted-foreground" />
-        <h4 className="font-semibold text-sm">Comments ({comments.length})</h4>
-      </div>
-
-      <div className="flex gap-2">
-        <Textarea
-          placeholder="Add a comment..."
-          value={newComment}
-          onChange={(e) => setNewComment(e.target.value)}
-          className="flex-1 min-h-[60px] text-sm"
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              addComment();
-            }
-          }}
-        />
-        <Button
-          size="sm"
-          onClick={addComment}
-          disabled={!newComment.trim() || submitting}
-          className="self-end"
-        >
-          {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-        </Button>
-      </div>
-
-      {loading ? (
-        <div className="flex items-center justify-center py-4">
-          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-        </div>
-      ) : comments.length === 0 ? (
-        <p className="text-sm text-muted-foreground text-center py-4">No comments yet</p>
-      ) : (
-        <div className="max-h-[300px] overflow-y-auto space-y-3">
-          {comments.map((comment) => (
-            <div key={comment.id} className="flex gap-3 p-3 rounded-lg bg-muted/30">
-              <div className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0" style={{ background: avatarColor(getUserName(comment)) }}>
-                {getInitials(getUserName(comment))}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium text-sm">{getUserName(comment)}</span>
-                  <span className="text-xs text-muted-foreground">{format(new Date(comment.created_at), "dd MMM, hh:mm a")}</span>
-                </div>
-                <p className="text-sm break-words">{comment.comment}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ── Auto Call Queue (30 sec cooldown between calls) ─────────────────────
 function AutoCallQueue({
   leads,
@@ -1260,18 +1310,45 @@ export default function Leads() {
     }
   }, [fetchAll]);
 
-  // ── Update Stage (used by employees inline in the table, no full edit dialog needed) ──
+  // ── Update Stage (FIXED) ──────────────────────────────────────────────
   const handleUpdateStage = useCallback(async (id: string, stage: string) => {
     const subStage = SUB_STAGES[stage]?.[0] ?? "-";
-    setLeads(prev => prev.map(l => (l.id === id ? { ...l, stage, sub_stage: subStage } : l)));
-    if (detailLead?.id === id) setDetailLead(prev => (prev ? { ...prev, stage, sub_stage: subStage } : prev));
+    
+    console.log(`Updating lead ${id} to stage: ${stage}, sub-stage: ${subStage}`);
+    
+    // Optimistic update
+    setLeads(prev => prev.map(l => 
+      l.id === id ? { ...l, stage, sub_stage: subStage } : l
+    ));
+    
+    if (detailLead?.id === id) {
+      setDetailLead(prev => prev ? { ...prev, stage, sub_stage: subStage } : prev);
+    }
+    
     try {
-      const { error } = await supabase.from("leads").update({ stage, sub_stage: subStage }).eq("id", id);
-      if (error) throw error;
-      logActivity(id, "stage_updated", `Stage: ${stage}`);
+      const { data, error } = await supabase
+        .from("leads")
+        .update({ 
+          stage, 
+          sub_stage: subStage
+        })
+        .eq("id", id)
+        .select();
+        
+      if (error) {
+        console.error("Stage update error:", error);
+        throw error;
+      }
+      
+      console.log("Stage updated successfully:", data);
+      
+      // Log the activity
+      await logActivity(id, "stage_updated", `Stage: ${stage}, Sub-stage: ${subStage}`);
       toast.success(`✅ Stage updated to ${stage}`);
     } catch (err: any) {
+      console.error("Failed to update stage:", err);
       toast.error(err.message || "Failed to update stage");
+      // Revert optimistic update
       await fetchAll();
     }
   }, [detailLead, logActivity, fetchAll]);
