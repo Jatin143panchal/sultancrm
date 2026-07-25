@@ -1217,12 +1217,15 @@ export default function Leads() {
       toast.error("Name and Phone are required");
       return;
     }
-    // Non-admins always get their own new leads assigned to themselves —
-    // otherwise the lead lands as "unassigned" and the filter below (which
-    // only shows a non-admin their own assigned leads) hides it from them.
+    // Non-admins get new leads assigned to themselves automatically — but
+    // only if their id actually exists in `agents` (assigned_to has a FK to
+    // agents.id). If it doesn't, forcing that id causes the insert to fail
+    // with a foreign-key violation and NOTHING gets added — so fall back to
+    // null (unassigned) instead of silently breaking the insert.
+    const selfIsRealAgent = !!currentUser?.id && agents.some(a => a.id === currentUser.id);
     const finalAssignee = isAdmin
       ? (form.assigned_to === "unassigned" ? null : form.assigned_to)
-      : (currentUser?.id ?? null);
+      : (selfIsRealAgent ? currentUser!.id : null);
     try {
       const { error } = await supabase.from("leads").insert({
         name: form.name, phone: form.phone, email: form.email || null, address: form.address,
@@ -1238,9 +1241,10 @@ export default function Leads() {
       toast.success("✅ Lead added successfully");
       await fetchAll();
     } catch (err: any) {
-      toast.error(err.message || "Failed to add lead");
+      console.error("Add lead failed:", err);
+      toast.error(err?.message || "Failed to add lead");
     }
-  }, [form, fetchAll, isAdmin, currentUser]);
+  }, [form, fetchAll, isAdmin, currentUser, agents]);
 
   // ── Assign Lead ──
   const handleAssign = useCallback(async (id: string, agentId: string) => {
