@@ -1107,6 +1107,7 @@ export default function Leads() {
     qty_days: "", value: "", lead_type: "Herbal & Ayurvedic", source: "Website",
     budget: "Below Rs 50k", stage: "New", sub_stage: "-", temperature: "Warm",
     order_status: "New Order", previous_history: "", remark: "", call_status: "pending",
+    assigned_to: "unassigned",
   };
   const [form, setForm] = useState(emptyForm);
 
@@ -1216,6 +1217,12 @@ export default function Leads() {
       toast.error("Name and Phone are required");
       return;
     }
+    // Non-admins always get their own new leads assigned to themselves —
+    // otherwise the lead lands as "unassigned" and the filter below (which
+    // only shows a non-admin their own assigned leads) hides it from them.
+    const finalAssignee = isAdmin
+      ? (form.assigned_to === "unassigned" ? null : form.assigned_to)
+      : (currentUser?.id ?? null);
     try {
       const { error } = await supabase.from("leads").insert({
         name: form.name, phone: form.phone, email: form.email || null, address: form.address,
@@ -1223,7 +1230,7 @@ export default function Leads() {
         value: Number(form.value) || 0, lead_type: form.lead_type, source: form.source,
         budget: form.budget, stage: form.stage, sub_stage: form.sub_stage, temperature: form.temperature,
         order_status: form.order_status, previous_history: form.previous_history, remark: form.remark,
-        call_status: form.call_status || "pending",
+        call_status: form.call_status || "pending", assigned_to: finalAssignee,
       });
       if (error) throw error;
       setForm(emptyForm);
@@ -1233,7 +1240,7 @@ export default function Leads() {
     } catch (err: any) {
       toast.error(err.message || "Failed to add lead");
     }
-  }, [form, fetchAll]);
+  }, [form, fetchAll, isAdmin, currentUser]);
 
   // ── Assign Lead ──
   const handleAssign = useCallback(async (id: string, agentId: string) => {
@@ -1978,6 +1985,18 @@ export default function Leads() {
                       <SelectContent>{ORDER_STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
                     </Select>
                   </div>
+                  {isAdmin && (
+                    <div className="grid gap-2">
+                      <Label>Assign To</Label>
+                      <Select value={form.assigned_to} onValueChange={v => setForm({ ...form, assigned_to: v })}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="unassigned">Unassigned</SelectItem>
+                          {agents.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                   <div className="grid gap-2 sm:col-span-2">
                     <Label>Previous History</Label>
                     <Textarea value={form.previous_history} onChange={e => setForm({ ...form, previous_history: e.target.value })} />
