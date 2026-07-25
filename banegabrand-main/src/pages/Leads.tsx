@@ -1083,6 +1083,11 @@ export default function Leads() {
   // Admin can toggle "My Leads" to check their own queue too.
   const [showOnlyMine, setShowOnlyMine] = useState(false);
 
+  // ── Bulk selection (checkboxes in the leads table) ───────────────────
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkAssignTo, setBulkAssignTo] = useState("unassigned");
+  const [bulkActing, setBulkActing] = useState(false);
+
   // ── Dialogs ──────────────────────────────────────────────────────────
   const [dialogOpen, setDialogOpen] = useState(false);
   const [detailLead, setDetailLead] = useState<Lead | null>(null);
@@ -1092,6 +1097,7 @@ export default function Leads() {
   const [uploadPreview, setUploadPreview] = useState<any[]>([]);
   const [uploading, setUploading] = useState(false);
   const [importSummary, setImportSummary] = useState<{ imported: number } | null>(null);
+  const [importAssignTo, setImportAssignTo] = useState("unassigned");
   const fileRef = useRef<HTMLInputElement>(null);
   const [exportStage, setExportStage] = useState("all");
 
@@ -1371,6 +1377,10 @@ export default function Leads() {
   const currentItems = useMemo(() => filtered.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage), [filtered, currentPage]);
   useEffect(() => { setCurrentPage(1); }, [filtered.length]);
 
+  // Clear the checkbox selection whenever the visible lead set changes, so
+  // stale/hidden ids never linger in a bulk action.
+  useEffect(() => { setSelectedIds(new Set()); }, [search, filterStage, filterTemperature, filterLeadType, filterBudget, filterAssignee, filterCallStatus, filterPreset, dateFrom, dateTo, showOnlyMine]);
+
   const clearFilters = useCallback(() => {
     setSearch("");
     setFilterStage("all");
@@ -1383,6 +1393,92 @@ export default function Leads() {
     setDateFrom("");
     setDateTo("");
   }, []);
+
+  // ── Bulk selection helpers ──────────────────────────────────────────
+  const toggleSelectOne = useCallback((id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const allOnPageSelected = currentItems.length > 0 && currentItems.every(l => selectedIds.has(l.id));
+
+  const toggleSelectAllOnPage = useCallback(() => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      const allSelected = currentItems.length > 0 && currentItems.every(l => next.has(l.id));
+      if (allSelected) {
+        currentItems.forEach(l => next.delete(l.id));
+      } else {
+        currentItems.forEach(l => next.add(l.id));
+      }
+      return next;
+    });
+  }, [currentItems]);
+
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+
+  // ── Bulk Assign ──
+  const handleBulkAssign = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    const finalAgent = bulkAssignTo === "unassigned" ? null : bulkAssignTo;
+    const ids = Array.from(selectedIds);
+    setBulkActing(true);
+    setLeads(prev => prev.map(l => (selectedIds.has(l.id) ? { ...l, assigned_to: finalAgent } : l)));
+    try {
+      const { error } = await supabase.from("leads").update({ assigned_to: finalAgent }).in("id", ids);
+      if (error) throw error;
+      toast.success(`✅ ${ids.length} lead(s) assigned to ${finalAgent ? getAgentName(finalAgent) : "Unassigned"}`);
+      clearSelection();
+    } catch (err: any) {
+      toast.error(err.message || "Bulk assign failed");
+      await fetchAll();
+    } finally {
+      setBulkActing(false);
+    }
+  }, [selectedIds, bulkAssignTo, getAgentName, fetchAll, clearSelection]);
+
+  // ── Bulk Delete ──
+  const handleBulkDelete = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    if (!confirm(`Delete ${selectedIds.size} selected lead(s)? This cannot be undone.`)) return;
+    const ids = Array.from(selectedIds);
+    setBulkActing(true);
+    try {
+      const { error } = await supabase.from("leads").delete().in("id", ids);
+      if (error) throw error;
+      setLeads(prev => prev.filter(l => !selectedIds.has(l.id)));
+      toast.success(`🗑️ ${ids.length} lead(s) deleted`);
+      clearSelection();
+    } catch (err: any) {
+      toast.error(err.message || "Bulk delete failed");
+      await fetchAll();
+    } finally {
+      setBulkActing(false);
+    }
+  }, [selectedIds, fetchAll, clearSelection]);
+
+  // ── Bulk Stage Update ──
+  const handleBulkStage = useCallback(async (stage: string) => {
+    if (selectedIds.size === 0 || !stage) return;
+    const subStage = SUB_STAGES[stage]?.[0] ?? "-";
+    const ids = Array.from(selectedIds);
+    setBulkActing(true);
+    setLeads(prev => prev.map(l => (selectedIds.has(l.id) ? { ...l, stage, sub_stage: subStage } : l)));
+    try {
+      const { error } = await supabase.from("leads").update({ stage, sub_stage: subStage }).in("id", ids);
+      if (error) throw error;
+      toast.success(`✅ ${ids.length} lead(s) moved to ${stage}`);
+      clearSelection();
+    } catch (err: any) {
+      toast.error(err.message || "Bulk stage update failed");
+      await fetchAll();
+    } finally {
+      setBulkActing(false);
+    }
+  }, [selectedIds, fetchAll, clearSelection]);
 
   // ── Stats ── (scoped to what the current user is allowed to see, i.e. `filtered`'s source set)
   const visibleLeads = useMemo(
@@ -1435,6 +1531,7 @@ export default function Leads() {
   const handleBulkImport = useCallback(async () => {
     if (uploadPreview.length === 0) return;
     setUploading(true);
+    const finalAgent = importAssignTo === "unassigned" ? null : importAssignTo;
     let success = 0;
     for (const lead of uploadPreview) {
       try {
@@ -1443,19 +1540,20 @@ export default function Leads() {
           qty_days: lead.qty_days, value: lead.value, previous_history: lead.previous_history,
           remark: lead.remark, disease: lead.disease, temperature: lead.temperature,
           stage: "New", sub_stage: "-", source: "Existing Customer",
-          call_status: "pending",
+          call_status: "pending", assigned_to: finalAgent,
         });
         if (!error) success++;
       } catch { /* skip row */ }
     }
     setUploading(false);
     setUploadPreview([]);
+    setImportAssignTo("unassigned");
     if (fileRef.current) fileRef.current.value = "";
     await fetchAll();
     setImportSummary({ imported: success });
-    toast.success(`✅ ${success} leads imported into "New" stage`);
+    toast.success(`✅ ${success} leads imported into "New" stage${finalAgent ? ` and assigned to ${getAgentName(finalAgent)}` : ""}`);
     setUploadOpen(false);
-  }, [uploadPreview, fetchAll]);
+  }, [uploadPreview, importAssignTo, fetchAll, getAgentName]);
 
   const buildExportRows = useCallback((rows: Lead[]) => rows.map(l => ({
     "Lead ID": l.lead_code, Name: l.name, Number: l.phone, Address: l.address,
@@ -1477,6 +1575,16 @@ export default function Leads() {
     XLSX.writeFile(wb, `leads_export_${stage === "all" ? "all" : stage}.xlsx`);
     toast.success(`📥 ${src.length} lead(s) exported`);
   }, [visibleLeads, buildExportRows]);
+
+  const handleExportSelected = useCallback(() => {
+    if (selectedIds.size === 0) return;
+    const src = leads.filter(l => selectedIds.has(l.id));
+    const ws = XLSX.utils.json_to_sheet(buildExportRows(src));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Selected Leads");
+    XLSX.writeFile(wb, `leads_export_selected.xlsx`);
+    toast.success(`📥 ${src.length} selected lead(s) exported`);
+  }, [selectedIds, leads, buildExportRows]);
 
   // ── Loading ──
   if (isLoading) {
@@ -1715,6 +1823,7 @@ export default function Leads() {
               setUploadOpen(o);
               if (!o) { setUploadPreview([]);
                 setImportSummary(null);
+                setImportAssignTo("unassigned");
                 if (fileRef.current) fileRef.current.value = ""; }
             }}>
               <DialogTrigger asChild>
@@ -1738,28 +1847,40 @@ export default function Leads() {
                     <Input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleFileUpload} className="max-w-xs mx-auto" />
                   </div>
                   {uploadPreview.length > 0 && (
-                    <div className="max-h-60 overflow-auto rounded border">
-                      <Table>
-                        <TableHeader>
-                          <TableRow><TableHead>Name</TableHead><TableHead>Number</TableHead><TableHead>Medicine</TableHead><TableHead>Price</TableHead></TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {uploadPreview.slice(0, 10).map((r, i) => (
-                            <TableRow key={i}>
-                              <TableCell>{r.name}</TableCell>
-                              <TableCell>{r.phone}</TableCell>
-                              <TableCell>{r.medicine}</TableCell>
-                              <TableCell>{r.value}</TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                      {uploadPreview.length > 10 && (
-                        <p className="text-xs text-muted-foreground text-center py-2">
-                          ...and {uploadPreview.length - 10} more
-                        </p>
-                      )}
-                    </div>
+                    <>
+                      <div className="grid gap-2 max-w-xs">
+                        <Label className="text-xs">Assign all imported leads to</Label>
+                        <Select value={importAssignTo} onValueChange={setImportAssignTo}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="unassigned">Unassigned</SelectItem>
+                            {agents.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="max-h-60 overflow-auto rounded border">
+                        <Table>
+                          <TableHeader>
+                            <TableRow><TableHead>Name</TableHead><TableHead>Number</TableHead><TableHead>Medicine</TableHead><TableHead>Price</TableHead></TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {uploadPreview.slice(0, 10).map((r, i) => (
+                              <TableRow key={i}>
+                                <TableCell>{r.name}</TableCell>
+                                <TableCell>{r.phone}</TableCell>
+                                <TableCell>{r.medicine}</TableCell>
+                                <TableCell>{r.value}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                        {uploadPreview.length > 10 && (
+                          <p className="text-xs text-muted-foreground text-center py-2">
+                            ...and {uploadPreview.length - 10} more
+                          </p>
+                        )}
+                      </div>
+                    </>
                   )}
                   {importSummary && (
                     <div className="flex items-center gap-2 rounded-lg border bg-muted/30 p-3 text-sm text-green-700">
@@ -1921,6 +2042,48 @@ export default function Leads() {
           </CardContent>
         </Card>
 
+        {/* Bulk Action Toolbar — shows when 1+ leads are checked (Admin only) */}
+        {isAdmin && selectedIds.size > 0 && (
+          <Card className="border-primary/40 bg-primary/5">
+            <CardContent className="p-3 flex flex-wrap items-center gap-2">
+              <Badge className="px-3 py-1">{selectedIds.size} selected</Badge>
+
+              <div className="flex items-center gap-1.5">
+                <Select value={bulkAssignTo} onValueChange={setBulkAssignTo}>
+                  <SelectTrigger className="w-40 h-9"><SelectValue placeholder="Assign to..." /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="unassigned">Unassigned</SelectItem>
+                    {agents.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Button size="sm" variant="outline" onClick={handleBulkAssign} disabled={bulkActing}>
+                  {bulkActing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UserCog className="mr-2 h-4 w-4" />}
+                  Bulk Assign
+                </Button>
+              </div>
+
+              <Select onValueChange={handleBulkStage}>
+                <SelectTrigger className="w-40 h-9"><SelectValue placeholder="Move stage to..." /></SelectTrigger>
+                <SelectContent>
+                  {STAGES.map(s => <SelectItem key={s.value} value={s.value}>{s.icon} {s.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+
+              <Button size="sm" variant="outline" onClick={handleExportSelected} disabled={bulkActing}>
+                <Download className="mr-2 h-4 w-4" />Export Selected
+              </Button>
+
+              <Button size="sm" variant="destructive" onClick={handleBulkDelete} disabled={bulkActing}>
+                <Trash2 className="mr-2 h-4 w-4" />Delete Selected
+              </Button>
+
+              <Button size="sm" variant="ghost" onClick={clearSelection}>
+                <X className="mr-2 h-4 w-4" />Clear
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Leads Table */}
         <Card>
           <CardHeader className="pb-3">
@@ -1958,6 +2121,17 @@ export default function Leads() {
                   <Table>
                     <TableHeader>
                       <TableRow>
+                        {isAdmin && (
+                          <TableHead className="w-8">
+                            <input
+                              type="checkbox"
+                              checked={allOnPageSelected}
+                              onChange={toggleSelectAllOnPage}
+                              className="h-4 w-4 cursor-pointer align-middle"
+                              aria-label="Select all leads on this page"
+                            />
+                          </TableHead>
+                        )}
                         <TableHead>Lead</TableHead>
                         <TableHead>Number</TableHead>
                         <TableHead className="hidden lg:table-cell">Medicine</TableHead>
@@ -1976,7 +2150,18 @@ export default function Leads() {
                         const wa = buildWhatsAppLink(lead);
                         const callStatus = getCallStatusConfig(lead.call_status);
                         return (
-                          <TableRow key={lead.id}>
+                          <TableRow key={lead.id} className={selectedIds.has(lead.id) ? "bg-primary/5" : undefined}>
+                            {isAdmin && (
+                              <TableCell>
+                                <input
+                                  type="checkbox"
+                                  checked={selectedIds.has(lead.id)}
+                                  onChange={() => toggleSelectOne(lead.id)}
+                                  className="h-4 w-4 cursor-pointer align-middle"
+                                  aria-label={`Select ${lead.name}`}
+                                />
+                              </TableCell>
+                            )}
                             <TableCell>
                               <div className="flex items-center gap-2">
                                 <p className="font-semibold text-sm">{lead.name}</p>
