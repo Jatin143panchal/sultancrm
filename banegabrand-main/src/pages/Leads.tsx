@@ -100,6 +100,7 @@ interface Lead {
   business_status: string | null;
   next_call_date: string | null;
   call_status: string | null;
+  last_call_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -152,6 +153,9 @@ const BIZ_STATUSES = ["Active", "No-Go", "Done"];
 
 const STAGE_BONUS: Record<string, number> = { New: 5, Ringing: 10, Callback: 12, DP: 15, VMS: 15, PG: 20, Converted: 30, Lost: 0 };
 const TEMP_BONUS: Record<string, number> = { Hot: 15, Warm: 8, Cold: 0 };
+
+// Cooldown (seconds) before the next call in the auto-dialer queue unlocks
+const CALL_COOLDOWN_SECONDS = 30;
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -882,6 +886,175 @@ function LeadComments({ leadId, currentUser }: { leadId: string; currentUser: an
   );
 }
 
+// ── Auto Call Queue (30 sec cooldown between calls) ─────────────────────
+function AutoCallQueue({
+  leads,
+  currentUserId,
+  onUpdateCallStatus,
+  onLogCall,
+}: {
+  leads: Lead[];
+  currentUserId: string;
+  onUpdateCallStatus: (id: string, status: string) => void;
+  onLogCall: (id: string) => void;
+}) {
+  // Only this agent's leads that still need a call
+  const queue = useMemo(
+    () =>
+      leads
+        .filter(
+          l =>
+            l.assigned_to === currentUserId &&
+            l.stage !== "Converted" &&
+            l.stage !== "Lost" &&
+            (l.call_status === "pending" || l.call_status === "followup" || l.call_status === "callback_requested")
+        )
+        .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()),
+    [leads, currentUserId]
+  );
+
+  const [index, setIndex] = useState(0);
+  const [cooldown, setCooldown] = useState(0); // seconds left before next call unlocks
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const current = queue[index] || null;
+
+  useEffect(() => {
+    // if the queue shrinks/reorders (lead converted, lost, etc), keep index valid
+    if (index >= queue.length) setIndex(0);
+  }, [queue.length, index]);
+
+  useEffect(() => {
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, []);
+
+  const startCooldown = useCallback(() => {
+    setCooldown(CALL_COOLDOWN_SECONDS);
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = setInterval(() => {
+      setCooldown(prev => {
+        if (prev <= 1) {
+          if (timerRef.current) clearInterval(timerRef.current);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }, []);
+
+  const handleCall = useCallback(() => {
+    if (!current) return;
+    onLogCall(current.id);
+    if (current.call_status === "pending") onUpdateCallStatus(current.id, "ringing");
+    startCooldown();
+  }, [current, onLogCall, onUpdateCallStatus, startCooldown]);
+
+  const goNext = useCallback(() => {
+    setCooldown(0);
+    if (timerRef.current) clearInterval(timerRef.current);
+    setIndex(prev => (prev + 1 < queue.length ? prev + 1 : 0));
+  }, [queue.length]);
+
+  const handleOutcome = useCallback((status: string) => {
+    if (!current) return;
+    onUpdateCallStatus(current.id, status);
+    goNext();
+  }, [current, onUpdateCallStatus, goNext]);
+
+  if (queue.length === 0) {
+    return (
+      <Card className="border-dashed">
+        <CardContent className="p-6 text-center text-sm text-muted-foreground">
+          <PhoneCall className="h-5 w-5 mx-auto mb-2 opacity-50" />
+          No pending calls in your queue right now. 🎉
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const wa = current ? buildWhatsAppLink(current) : null;
+  const canCall = cooldown === 0;
+
+  return (
+    <Card className="border-primary/20">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center justify-between text-base">
+          <span className="flex items-center gap-2">
+            <PhoneCall className="h-5 w-5 text-primary" />
+            Auto Call Queue
+          </span>
+          <Badge variant="outline">{index + 1} / {queue.length}</Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {current && (
+          <>
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-full flex items-center justify-center text-white font-bold" style={{ background: avatarColor(current.name) }}>
+                {getInitials(current.name)}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold">{current.name}</p>
+                <p className="text-xs text-muted-foreground font-mono">{hidePhoneNumber(current.phone)}</p>
+              </div>
+              <StagePill stage={current.stage} subStage={current.sub_stage} />
+            </div>
+
+            {!canCall && (
+              <div className="rounded-lg bg-muted/40 p-3 text-center">
+                <p className="text-xs text-muted-foreground mb-1">Next call unlocks in</p>
+                <p className="text-2xl font-bold text-primary flex items-center justify-center gap-1">
+                  <Timer className="h-5 w-5" /> {cooldown}s
+                </p>
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-2">
+              <Button className="flex-1 min-w-[140px]" disabled={!canCall} asChild={canCall}>
+                {canCall ? (
+                  <a href={current.phone ? `tel:${current.phone}` : "#"} onClick={handleCall}>
+                    <Phone className="mr-2 h-4 w-4" /> Call Now
+                  </a>
+                ) : (
+                  <span><Phone className="mr-2 h-4 w-4" /> Call Now</span>
+                )}
+              </Button>
+              {wa && (
+                <Button variant="outline" className="text-green-600 border-green-200" asChild>
+                  <a href={wa} target="_blank" rel="noopener noreferrer">
+                    <MessageCircle className="mr-2 h-4 w-4" /> WhatsApp
+                  </a>
+                </Button>
+              )}
+              <Button variant="outline" onClick={goNext} title="Skip this lead">
+                <ChevronRight className="mr-2 h-4 w-4" /> Skip
+              </Button>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+              <Button size="sm" variant="outline" className="text-green-600 border-green-200" onClick={() => handleOutcome("interested")}>
+                ✅ Interested
+              </Button>
+              <Button size="sm" variant="outline" className="text-red-600 border-red-200" onClick={() => handleOutcome("not_interested")}>
+                ❌ Not Interested
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => handleOutcome("callback_requested")}>
+                🔄 Callback
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => handleOutcome("followup")}>
+                📅 Follow-up
+              </Button>
+            </div>
+            <p className="text-[11px] text-muted-foreground text-center">
+              Marking an outcome auto-advances to the next lead. "Call Now" locks for {CALL_COOLDOWN_SECONDS}s so you're not calling back-to-back.
+            </p>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Main Component ──────────────────────────────────────────────────────
 
 export default function Leads() {
@@ -906,6 +1079,10 @@ export default function Leads() {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 50;
 
+  // Non-admin employees always see only their own leads.
+  // Admin can toggle "My Leads" to check their own queue too.
+  const [showOnlyMine, setShowOnlyMine] = useState(false);
+
   // ── Dialogs ──────────────────────────────────────────────────────────
   const [dialogOpen, setDialogOpen] = useState(false);
   const [detailLead, setDetailLead] = useState<Lead | null>(null);
@@ -927,11 +1104,19 @@ export default function Leads() {
   };
   const [form, setForm] = useState(emptyForm);
 
-  // ── Get Current User ────────────────────────────────────────────────
+  // ── Get Current User + Role (real profile/agent row, not hardcoded) ──
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
+    supabase.auth.getUser().then(async ({ data }) => {
       setCurrentUser(data.user);
-      setIsAdmin(data.user?.email?.includes('admin') || false);
+      if (!data.user) return;
+      // Look up this user's REAL row in `agents` (created automatically on
+      // signup by the `handle_new_user` trigger — see the SQL migration).
+      const { data: agentRow } = await supabase
+        .from("agents")
+        .select("role")
+        .eq("id", data.user.id)
+        .maybeSingle();
+      setIsAdmin(agentRow?.role === "admin");
     });
   }, []);
 
@@ -945,6 +1130,8 @@ export default function Leads() {
         { data: attendanceData, error: attendanceErr }
       ] = await Promise.all([
         supabase.from("leads").select("*").order("created_at", { ascending: false }),
+        // Real employees only — this table is populated automatically when
+        // someone signs up (see handle_new_user trigger in the SQL file).
         supabase.from("agents").select("*").order("name"),
         supabase.from("attendance").select("*").order("date", { ascending: false }).limit(500)
       ]);
@@ -982,6 +1169,22 @@ export default function Leads() {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
+  // Real employees also join/leave live — keep the team list in sync.
+  useEffect(() => {
+    const channel = supabase.channel("agents-changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "agents" }, payload => {
+        if (payload.eventType === "INSERT") {
+          setAgents(prev => prev.some(a => a.id === (payload.new as Agent).id) ? prev : [...prev, payload.new as Agent]);
+        } else if (payload.eventType === "UPDATE") {
+          setAgents(prev => prev.map(a => (a.id === (payload.new as Agent).id ? (payload.new as Agent) : a)));
+        } else if (payload.eventType === "DELETE") {
+          setAgents(prev => prev.filter(a => a.id !== (payload.old as Agent).id));
+        }
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, []);
+
   // ── Helper Functions ──────────────────────────────────────────────
   const getAgentName = useCallback((id: string | null) => agents.find(a => a.id === id)?.name || "Unassigned", [agents]);
 
@@ -990,6 +1193,16 @@ export default function Leads() {
       await supabase.from("lead_activity").insert({ lead_id: leadId, action, detail });
     } catch { /* non-critical */ }
   }, []);
+
+  // Records the timestamp of a call — this is what the 30s cooldown reads.
+  const logCallAttempt = useCallback(async (leadId: string) => {
+    const now = new Date().toISOString();
+    setLeads(prev => prev.map(l => (l.id === leadId ? { ...l, last_call_at: now } : l)));
+    try {
+      await supabase.from("leads").update({ last_call_at: now }).eq("id", leadId);
+      logActivity(leadId, "called");
+    } catch { /* non-critical */ }
+  }, [logActivity]);
 
   // ── Lead CRUD ──────────────────────────────────────────────────────
   const handleAddLead = useCallback(async () => {
@@ -1029,6 +1242,22 @@ export default function Leads() {
       await fetchAll();
     }
   }, [fetchAll]);
+
+  // ── Update Stage (used by employees inline in the table, no full edit dialog needed) ──
+  const handleUpdateStage = useCallback(async (id: string, stage: string) => {
+    const subStage = SUB_STAGES[stage]?.[0] ?? "-";
+    setLeads(prev => prev.map(l => (l.id === id ? { ...l, stage, sub_stage: subStage } : l)));
+    if (detailLead?.id === id) setDetailLead(prev => (prev ? { ...prev, stage, sub_stage: subStage } : prev));
+    try {
+      const { error } = await supabase.from("leads").update({ stage, sub_stage: subStage }).eq("id", id);
+      if (error) throw error;
+      logActivity(id, "stage_updated", `Stage: ${stage}`);
+      toast.success(`✅ Stage updated to ${stage}`);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to update stage");
+      await fetchAll();
+    }
+  }, [detailLead, logActivity, fetchAll]);
 
   // ── Update Call Status ──────────────────────────────────────────────
   const handleUpdateCallStatus = useCallback(async (id: string, callStatus: string) => {
@@ -1114,6 +1343,11 @@ export default function Leads() {
   // ── Filters ──
   const filtered = useMemo(() => {
     return leads.filter(l => {
+      // Non-admins ALWAYS only see their own assigned leads.
+      // Admins can opt into "My Leads" view via showOnlyMine.
+      if (!isAdmin && l.assigned_to !== currentUser?.id) return false;
+      if (isAdmin && showOnlyMine && l.assigned_to !== currentUser?.id) return false;
+
       const q = search.toLowerCase();
       const matchSearch = l.name.toLowerCase().includes(q) || (l.phone || "").includes(search) || (l.medicine || "").toLowerCase().includes(q);
       const matchStage = filterStage === "all" || l.stage === filterStage;
@@ -1131,7 +1365,7 @@ export default function Leads() {
       const matchTo = !dateTo || created <= new Date(dateTo + "T23:59:59");
       return matchSearch && matchStage && matchTemp && matchType && matchBudget && matchAssignee && matchCallStatus && matchPreset && matchFrom && matchTo;
     });
-  }, [leads, search, filterStage, filterTemperature, filterLeadType, filterBudget, filterAssignee, filterCallStatus, filterPreset, dateFrom, dateTo]);
+  }, [leads, search, filterStage, filterTemperature, filterLeadType, filterBudget, filterAssignee, filterCallStatus, filterPreset, dateFrom, dateTo, isAdmin, showOnlyMine, currentUser]);
 
   const totalPages = Math.ceil(filtered.length / itemsPerPage);
   const currentItems = useMemo(() => filtered.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage), [filtered, currentPage]);
@@ -1150,17 +1384,21 @@ export default function Leads() {
     setDateTo("");
   }, []);
 
-  // ── Stats ──
+  // ── Stats ── (scoped to what the current user is allowed to see, i.e. `filtered`'s source set)
+  const visibleLeads = useMemo(
+    () => (isAdmin ? leads : leads.filter(l => l.assigned_to === currentUser?.id)),
+    [leads, isAdmin, currentUser]
+  );
   const stats = useMemo(() => ({
-    total: leads.length,
-    hot: leads.filter(l => l.temperature === "Hot").length,
-    warm: leads.filter(l => l.temperature === "Warm").length,
-    cold: leads.filter(l => l.temperature === "Cold").length,
-    converted: leads.filter(l => l.stage === "Converted").length,
-    active: leads.filter(l => l.stage !== "Converted" && l.stage !== "Lost").length,
-    interested: leads.filter(l => l.call_status === "interested").length,
-    ringing: leads.filter(l => l.call_status === "ringing").length,
-  }), [leads]);
+    total: visibleLeads.length,
+    hot: visibleLeads.filter(l => l.temperature === "Hot").length,
+    warm: visibleLeads.filter(l => l.temperature === "Warm").length,
+    cold: visibleLeads.filter(l => l.temperature === "Cold").length,
+    converted: visibleLeads.filter(l => l.stage === "Converted").length,
+    active: visibleLeads.filter(l => l.stage !== "Converted" && l.stage !== "Lost").length,
+    interested: visibleLeads.filter(l => l.call_status === "interested").length,
+    ringing: visibleLeads.filter(l => l.call_status === "ringing").length,
+  }), [visibleLeads]);
 
   // ── Import/Export ──
   const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1231,14 +1469,14 @@ export default function Leads() {
   })), [getAgentName]);
 
   const handleExportByStage = useCallback((stage: string) => {
-    const src = stage === "all" ? leads : leads.filter(l => l.stage === stage);
+    const src = stage === "all" ? visibleLeads : visibleLeads.filter(l => l.stage === stage);
     if (src.length === 0) { toast.error(`No leads found for "${stage}"`); return; }
     const ws = XLSX.utils.json_to_sheet(buildExportRows(src));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, (stage === "all" ? "All Leads" : stage).slice(0, 31));
     XLSX.writeFile(wb, `leads_export_${stage === "all" ? "all" : stage}.xlsx`);
     toast.success(`📥 ${src.length} lead(s) exported`);
-  }, [leads, buildExportRows]);
+  }, [visibleLeads, buildExportRows]);
 
   // ── Loading ──
   if (isLoading) {
@@ -1283,6 +1521,16 @@ export default function Leads() {
 
       {/* ─── MY ATTENDANCE (for all users) ────────────────────────────── */}
       {currentUser && <MyAttendanceCard userId={currentUser.id} />}
+
+      {/* ─── AUTO CALL QUEUE (every employee sees their own) ──────────── */}
+      {currentUser && (
+        <AutoCallQueue
+          leads={leads}
+          currentUserId={currentUser.id}
+          onUpdateCallStatus={handleUpdateCallStatus}
+          onLogCall={logCallAttempt}
+        />
+      )}
 
       {/* ─── TEAM OVERVIEW (Admin Only) ──────────────────────────────── */}
       {isAdmin && (
@@ -1393,7 +1641,7 @@ export default function Leads() {
           {/* Team Attendance Table */}
           <TeamAttendanceTable agents={agents} attendance={attendance} />
 
-          {/* Employee Cards */}
+          {/* Employee Cards — real signed-up employees only */}
           <Card>
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
@@ -1402,15 +1650,21 @@ export default function Leads() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {agents.map(agent => (
-                  <EmployeeCard
-                    key={agent.id}
-                    agent={agent}
-                    onStatusChange={handleAgentStatus}
-                  />
-                ))}
-              </div>
+              {agents.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-8">
+                  No employees have signed up yet. Once someone creates an account, they'll show up here automatically.
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {agents.map(agent => (
+                    <EmployeeCard
+                      key={agent.id}
+                      agent={agent}
+                      onStatusChange={handleAgentStatus}
+                    />
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
         </>
@@ -1423,27 +1677,40 @@ export default function Leads() {
           <div>
             <h2 className="text-xl font-bold tracking-tight flex items-center gap-2">
               <Zap className="h-5 w-5 text-primary" />
-              Lead Management
+              {isAdmin && !showOnlyMine ? "Lead Management" : "My Leads"}
             </h2>
             <p className="text-muted-foreground text-sm">
-              Track and manage all your leads in one place
+              {isAdmin && !showOnlyMine ? "Track and manage all your leads in one place" : "Leads assigned to you — update stage & call status as you work them"}
             </p>
           </div>
           <div className="flex flex-wrap gap-2 w-full sm:w-auto">
-            <div className="flex items-center gap-1.5">
-              <Select value={exportStage} onValueChange={setExportStage}>
-                <SelectTrigger className="w-36 h-9"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Stages</SelectItem>
-                  {STAGES.map(s => <SelectItem key={s.value} value={s.value}>{s.icon} {s.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              <Button variant="outline" size="sm" onClick={() => handleExportByStage(exportStage)}>
-                <Download className="mr-2 h-4 w-4" />Export
+            {isAdmin && (
+              <Button
+                variant={showOnlyMine ? "default" : "outline"}
+                size="sm"
+                onClick={() => setShowOnlyMine(v => !v)}
+              >
+                <UserCheck className="mr-2 h-4 w-4" />
+                {showOnlyMine ? "Showing: My Leads" : "Show My Leads Only"}
               </Button>
-            </div>
+            )}
+            {isAdmin && (
+              <div className="flex items-center gap-1.5">
+                <Select value={exportStage} onValueChange={setExportStage}>
+                  <SelectTrigger className="w-36 h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Stages</SelectItem>
+                    {STAGES.map(s => <SelectItem key={s.value} value={s.value}>{s.icon} {s.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Button variant="outline" size="sm" onClick={() => handleExportByStage(exportStage)}>
+                  <Download className="mr-2 h-4 w-4" />Export
+                </Button>
+              </div>
+            )}
 
-            {/* Import Dialog */}
+            {/* Import Dialog — Admin only */}
+            {isAdmin && (
             <Dialog open={uploadOpen} onOpenChange={o => {
               setUploadOpen(o);
               if (!o) { setUploadPreview([]);
@@ -1511,8 +1778,10 @@ export default function Leads() {
                 </DialogFooter>
               </DialogContent>
             </Dialog>
+            )}
 
-            {/* Add Lead Dialog */}
+            {/* Add Lead Dialog — Admin only */}
+            {isAdmin && (
             <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
               <DialogTrigger asChild>
                 <Button size="sm">
@@ -1605,6 +1874,7 @@ export default function Leads() {
                 </div>
               </DialogContent>
             </Dialog>
+            )}
           </div>
         </div>
 
@@ -1616,14 +1886,16 @@ export default function Leads() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input placeholder="Search leads..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
               </div>
-              <Select value={filterAssignee} onValueChange={setFilterAssignee}>
-                <SelectTrigger className="w-36"><SelectValue placeholder="Assigned To" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Agents</SelectItem>
-                  <SelectItem value="unassigned">Unassigned</SelectItem>
-                  {agents.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              {isAdmin && (
+                <Select value={filterAssignee} onValueChange={setFilterAssignee}>
+                  <SelectTrigger className="w-36"><SelectValue placeholder="Assigned To" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Agents</SelectItem>
+                    <SelectItem value="unassigned">Unassigned</SelectItem>
+                    {agents.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              )}
               <Select value={filterCallStatus} onValueChange={setFilterCallStatus}>
                 <SelectTrigger className="w-36"><SelectValue placeholder="Call Status" /></SelectTrigger>
                 <SelectContent>
@@ -1661,7 +1933,7 @@ export default function Leads() {
               </p>
               <div className="flex gap-2">
                 {STAGES.filter(s => s.value !== "Lost" && s.value !== "Converted").map(s => {
-                  const count = leads.filter(l => l.stage === s.value).length;
+                  const count = visibleLeads.filter(l => l.stage === s.value).length;
                   return (
                     <button
                       key={s.value}
@@ -1692,7 +1964,7 @@ export default function Leads() {
                         <TableHead>Stage</TableHead>
                         <TableHead>Call Status</TableHead>
                         <TableHead>Temperature</TableHead>
-                        <TableHead>Assigned To</TableHead>
+                        {isAdmin && <TableHead>Assigned To</TableHead>}
                         <TableHead className="hidden lg:table-cell">Price</TableHead>
                         <TableHead>Score</TableHead>
                         <TableHead>Actions</TableHead>
@@ -1720,31 +1992,43 @@ export default function Leads() {
                             </TableCell>
                             <TableCell className="hidden lg:table-cell text-sm">{lead.medicine || "-"}</TableCell>
                             <TableCell>
-                              <StagePill stage={lead.stage} subStage={lead.sub_stage} />
+                              {isAdmin ? (
+                                <StagePill stage={lead.stage} subStage={lead.sub_stage} />
+                              ) : (
+                                <Select value={lead.stage} onValueChange={v => handleUpdateStage(lead.id, v)}>
+                                  <SelectTrigger className="w-[130px] h-7 text-xs"><SelectValue /></SelectTrigger>
+                                  <SelectContent>{STAGES.map(s => <SelectItem key={s.value} value={s.value}>{s.icon} {s.label}</SelectItem>)}</SelectContent>
+                                </Select>
+                              )}
                             </TableCell>
                             <TableCell>
-                              {callStatus ? (
-                                <Badge variant="outline" style={{ borderColor: callStatus.color, color: callStatus.color }}>
-                                  {callStatus.label}
-                                </Badge>
-                              ) : (
-                                <Badge variant="outline">Pending</Badge>
-                              )}
+                              <Select value={lead.call_status || "pending"} onValueChange={v => handleUpdateCallStatus(lead.id, v)}>
+                                <SelectTrigger className="w-[150px] h-7 text-xs">
+                                  <SelectValue>
+                                    {callStatus ? callStatus.label : "⏳ Pending"}
+                                  </SelectValue>
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {CALL_STATUSES.map(s => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
+                                </SelectContent>
+                              </Select>
                             </TableCell>
                             <TableCell>
                               <TemperatureBadge temperature={lead.temperature} />
                             </TableCell>
-                            <TableCell>
-                              <Select value={lead.assigned_to || "unassigned"} onValueChange={v => handleAssign(lead.id, v)}>
-                                <SelectTrigger className="w-[120px] h-7 text-xs">
-                                  <SelectValue>{getAgentName(lead.assigned_to)}</SelectValue>
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="unassigned">Unassigned</SelectItem>
-                                  {agents.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
-                                </SelectContent>
-                              </Select>
-                            </TableCell>
+                            {isAdmin && (
+                              <TableCell>
+                                <Select value={lead.assigned_to || "unassigned"} onValueChange={v => handleAssign(lead.id, v)}>
+                                  <SelectTrigger className="w-[120px] h-7 text-xs">
+                                    <SelectValue>{getAgentName(lead.assigned_to)}</SelectValue>
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="unassigned">Unassigned</SelectItem>
+                                    {agents.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                                  </SelectContent>
+                                </Select>
+                              </TableCell>
+                            )}
                             <TableCell className="hidden lg:table-cell text-sm">{formatCurrency(lead.value || 0)}</TableCell>
                             <TableCell><ScoreBadge score={score} /></TableCell>
                             <TableCell>
@@ -1752,9 +2036,11 @@ export default function Leads() {
                                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setDetailLead(lead)} title="View">
                                   <Eye className="h-3.5 w-3.5" />
                                 </Button>
-                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setEditLead(lead)} title="Edit">
-                                  <Edit className="h-3.5 w-3.5" />
-                                </Button>
+                                {isAdmin && (
+                                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setEditLead(lead)} title="Edit">
+                                    <Edit className="h-3.5 w-3.5" />
+                                  </Button>
+                                )}
                                 {wa && (
                                   <Button variant="ghost" size="icon" className="h-7 w-7 text-green-600" asChild title="WhatsApp">
                                     <a href={wa} target="_blank" rel="noopener noreferrer" onClick={() => logActivity(lead.id, "whatsapp")}>
@@ -1767,9 +2053,11 @@ export default function Leads() {
                                     <Flag className="h-3.5 w-3.5" />
                                   </Button>
                                 )}
-                                <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => handleDelete(lead.id)} title="Delete">
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
+                                {isAdmin && (
+                                  <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => handleDelete(lead.id)} title="Delete">
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                )}
                               </div>
                             </TableCell>
                           </TableRow>
@@ -1883,7 +2171,7 @@ export default function Leads() {
               <div className="flex flex-wrap gap-2 pt-2">
                 {detailLead.phone && (
                   <Button size="sm" variant="outline" asChild>
-                    <a href={`tel:${detailLead.phone}`} onClick={() => logActivity(detailLead.id, "called")}>
+                    <a href={`tel:${detailLead.phone}`} onClick={() => logCallAttempt(detailLead.id)}>
                       <Phone className="mr-1 h-3 w-3" />Call
                     </a>
                   </Button>
@@ -1911,7 +2199,7 @@ export default function Leads() {
         </DialogContent>
       </Dialog>
 
-      {/* Edit Dialog */}
+      {/* Edit Dialog — Admin only */}
       <Dialog open={!!editLead} onOpenChange={() => setEditLead(null)}>
         <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Edit Lead</DialogTitle></DialogHeader>
