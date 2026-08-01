@@ -10,8 +10,18 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { Loader2, Pencil, Bell, Eye } from "lucide-react";
+import { Loader2, Pencil, Bell, Eye, UserPlus, Trash2 } from "lucide-react";
 
 interface Profile { id: string; user_id: string; display_name: string | null; avatar_url: string | null; }
 interface Role { user_id: string; role: string; }
@@ -38,15 +48,30 @@ export default function EmployeeDirectory() {
   const [notifTitle, setNotifTitle] = useState("");
   const [notifMsg, setNotifMsg] = useState("");
 
+  // ---- Add Agent state ----
+  const [addAgentOpen, setAddAgentOpen] = useState(false);
+  const [newAgentName, setNewAgentName] = useState("");
+  const [newAgentEmail, setNewAgentEmail] = useState("");
+  const [newAgentPassword, setNewAgentPassword] = useState("");
+  const [creatingAgent, setCreatingAgent] = useState(false);
+
+  // ---- Delete Agent state ----
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deletingAgent, setDeletingAgent] = useState(false);
+
+  const fetchProfilesAndRoles = async () => {
+    const [p, r] = await Promise.all([
+      supabase.from("profiles").select("*"),
+      supabase.from("user_roles").select("user_id, role"),
+    ]);
+    setProfiles((p.data ?? []) as Profile[]);
+    setRoles((r.data ?? []) as Role[]);
+  };
+
   useEffect(() => {
     if (!canView) { setLoading(false); return; }
     (async () => {
-      const [p, r] = await Promise.all([
-        supabase.from("profiles").select("*"),
-        supabase.from("user_roles").select("user_id, role"),
-      ]);
-      setProfiles((p.data ?? []) as Profile[]);
-      setRoles((r.data ?? []) as Role[]);
+      await fetchProfilesAndRoles();
       setLoading(false);
     })();
   }, [canView]);
@@ -86,6 +111,54 @@ export default function EmployeeDirectory() {
     setNotifTitle(""); setNotifMsg(""); setNotifOpen(false);
   };
 
+  // ---- Create a new agent (signup) — calls secure edge function ----
+  const createAgent = async () => {
+    if (!newAgentEmail || !newAgentPassword || newAgentPassword.length < 6) {
+      toast.error("Email aur kam se kam 6 character ka password daalein");
+      return;
+    }
+    setCreatingAgent(true);
+    const { data, error } = await supabase.functions.invoke("manage-agents", {
+      body: {
+        action: "create",
+        email: newAgentEmail,
+        password: newAgentPassword,
+        display_name: newAgentName || newAgentEmail.split("@")[0],
+      },
+    });
+    setCreatingAgent(false);
+
+    if (error || data?.error) {
+      toast.error(error?.message || data?.error || "Agent create nahi hua");
+      return;
+    }
+
+    toast.success("Agent create ho gaya");
+    setNewAgentName(""); setNewAgentEmail(""); setNewAgentPassword("");
+    setAddAgentOpen(false);
+    fetchProfilesAndRoles();
+  };
+
+  // ---- Delete an agent — calls secure edge function ----
+  const deleteAgent = async () => {
+    if (!selected) return;
+    setDeletingAgent(true);
+    const { data, error } = await supabase.functions.invoke("manage-agents", {
+      body: { action: "delete", user_id: selected.user_id },
+    });
+    setDeletingAgent(false);
+
+    if (error || data?.error) {
+      toast.error(error?.message || data?.error || "Agent delete nahi hua");
+      return;
+    }
+
+    toast.success("Agent delete ho gaya");
+    setProfiles(profiles.filter(p => p.user_id !== selected.user_id));
+    setDeleteConfirmOpen(false);
+    setSelected(null);
+  };
+
   const roleFor = (uid: string) => roles.find(r => r.user_id === uid)?.role ?? "employee";
 
   if (!canView) return <div className="p-8 text-center text-muted-foreground">Access restricted to Owner, Admin and HR.</div>;
@@ -93,9 +166,16 @@ export default function EmployeeDirectory() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Employee Directory</h1>
-        <p className="text-muted-foreground">{isOwnerOrAdmin ? "Full access — view & edit all employees" : "Read-only view of employee details & reports"}</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Employee Directory</h1>
+          <p className="text-muted-foreground">{isOwnerOrAdmin ? "Full access — view & edit all employees" : "Read-only view of employee details & reports"}</p>
+        </div>
+        {isOwnerOrAdmin && (
+          <Button onClick={() => setAddAgentOpen(true)}>
+            <UserPlus className="h-4 w-4 mr-2" /> Add Agent
+          </Button>
+        )}
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -139,6 +219,11 @@ export default function EmployeeDirectory() {
                     {isOwnerOrAdmin && (
                       <Button size="sm" onClick={() => setNotifOpen(true)}>
                         <Bell className="h-4 w-4 mr-1" /> Notify
+                      </Button>
+                    )}
+                    {isOwnerOrAdmin && (
+                      <Button size="sm" variant="destructive" onClick={() => setDeleteConfirmOpen(true)}>
+                        <Trash2 className="h-4 w-4 mr-1" /> Delete
                       </Button>
                     )}
                   </div>
@@ -229,6 +314,53 @@ export default function EmployeeDirectory() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Add Agent dialog */}
+      <Dialog open={addAgentOpen} onOpenChange={setAddAgentOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Add New Agent</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="grid gap-2">
+              <Label>Agent Name</Label>
+              <Input value={newAgentName} onChange={(e) => setNewAgentName(e.target.value)} placeholder="Agent ka naam" />
+            </div>
+            <div className="grid gap-2">
+              <Label>Email</Label>
+              <Input type="email" value={newAgentEmail} onChange={(e) => setNewAgentEmail(e.target.value)} placeholder="agent@example.com" />
+            </div>
+            <div className="grid gap-2">
+              <Label>Password</Label>
+              <Input type="password" value={newAgentPassword} onChange={(e) => setNewAgentPassword(e.target.value)} placeholder="Min 6 characters" minLength={6} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddAgentOpen(false)}>Cancel</Button>
+            <Button onClick={createAgent} disabled={creatingAgent}>
+              {creatingAgent ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <UserPlus className="h-4 w-4 mr-2" />}
+              Add Agent
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Agent confirmation */}
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Agent delete karein?</AlertDialogTitle>
+            <AlertDialogDescription>
+              "{selected?.display_name ?? "Is agent"}" ka account permanently delete ho jayega. Ye action wapas nahi ho sakta.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingAgent}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={deleteAgent} disabled={deletingAgent} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              {deletingAgent ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Trash2 className="h-4 w-4 mr-2" />}
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
