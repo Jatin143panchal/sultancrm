@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useIsOwnerOrAdmin, useHasRole } from "@/hooks/useAdmin";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,7 +23,7 @@ import {
 import { toast } from "sonner";
 import { Loader2, Pencil, Bell, Eye, UserPlus, Trash2 } from "lucide-react";
 
-interface Profile { id: string; user_id: string; display_name: string | null; avatar_url: string | null; }
+interface Profile { user_id: string; display_name: string | null; email: string | null; department: string | null; job_title: string | null; }
 interface Role { user_id: string; role: string; }
 interface Attendance { id: string; user_id: string; date: string; check_in: string | null; check_out: string | null; status: string; }
 interface DailyReport { id: string; user_id: string; report_date: string; tasks_completed: string | null; tasks_pending: string | null; blockers: string | null; hours_worked: number | null; }
@@ -62,6 +62,10 @@ export default function EmployeeDirectory() {
   // ---- List filter: All Employees vs Agents Only ----
   const [roleFilter, setRoleFilter] = useState<"all" | "agent">("all");
 
+  // ---- Agents fetched directly from DB (user_roles joined with profiles) ----
+  const [agentProfiles, setAgentProfiles] = useState<Profile[]>([]);
+  const [agentsLoading, setAgentsLoading] = useState(false);
+
   const fetchProfilesAndRoles = async () => {
     const [p, r] = await Promise.all([
       supabase.from("profiles").select("*"),
@@ -71,10 +75,38 @@ export default function EmployeeDirectory() {
     setRoles((r.data ?? []) as Role[]);
   };
 
+  // Agents ko seedha DB se search karo: user_roles mai role = 'agent',
+  // aur uske saath profiles table join karo. Ye general profiles fetch
+  // se independent hai, isliye agar wahan koi issue ho to bhi ye chalega.
+  const fetchAgents = async () => {
+    setAgentsLoading(true);
+    const { data, error } = await supabase
+      .from("user_roles")
+      .select("user_id, profiles!inner(user_id, display_name, email, department, job_title)")
+      .eq("role", "agent");
+
+    if (error) {
+      console.error("fetchAgents error:", error);
+      toast.error("Agents load nahi ho paye: " + error.message);
+      setAgentsLoading(false);
+      return;
+    }
+
+    const rows: Profile[] = (data ?? []).map((r: any) => ({
+      user_id: r.profiles.user_id,
+      display_name: r.profiles.display_name,
+      email: r.profiles.email,
+      department: r.profiles.department,
+      job_title: r.profiles.job_title,
+    }));
+    setAgentProfiles(rows);
+    setAgentsLoading(false);
+  };
+
   useEffect(() => {
     if (!canView) { setLoading(false); return; }
     (async () => {
-      await fetchProfilesAndRoles();
+      await Promise.all([fetchProfilesAndRoles(), fetchAgents()]);
       setLoading(false);
     })();
   }, [canView]);
@@ -142,6 +174,7 @@ export default function EmployeeDirectory() {
     setNewAgentName(""); setNewAgentEmail(""); setNewAgentPassword("");
     setAddAgentOpen(false);
     fetchProfilesAndRoles();
+    fetchAgents();
   };
 
   // ---- Delete an agent — calls secure edge function ----
@@ -161,16 +194,15 @@ export default function EmployeeDirectory() {
 
     toast.success("Agent delete ho gaya");
     setProfiles(profiles.filter(p => p.user_id !== selected.user_id));
+    setAgentProfiles(agentProfiles.filter(a => a.user_id !== selected.user_id));
     setDeleteConfirmOpen(false);
     setSelected(null);
   };
 
   const roleFor = (uid: string) => roles.find(r => r.user_id === uid)?.role ?? "employee";
 
-  const visibleProfiles = roleFilter === "agent"
-    ? profiles.filter(p => roleFor(p.user_id) === "agent")
-    : profiles;
-  const agentCount = profiles.filter(p => roleFor(p.user_id) === "agent").length;
+  const visibleProfiles = roleFilter === "agent" ? agentProfiles : profiles;
+  const agentCount = agentProfiles.length;
 
   if (!canView) return <div className="p-8 text-center text-muted-foreground">Access restricted to Owner, Admin and HR.</div>;
   if (loading) return <div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
@@ -207,20 +239,25 @@ export default function EmployeeDirectory() {
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {visibleProfiles.length === 0 && (
+        {roleFilter === "agent" && agentsLoading && (
+          <div className="col-span-full flex items-center gap-2 text-sm text-muted-foreground py-4">
+            <Loader2 className="h-4 w-4 animate-spin" /> Agents load ho rahe hain...
+          </div>
+        )}
+        {!(roleFilter === "agent" && agentsLoading) && visibleProfiles.length === 0 && (
           <p className="text-sm text-muted-foreground col-span-full py-4">
             {roleFilter === "agent" ? "Abhi koi agent nahi hai." : "Koi employee nahi mila."}
           </p>
         )}
         {visibleProfiles.map(p => (
-          <Card key={p.id} className="cursor-pointer hover:border-primary transition" onClick={() => openEmployee(p)}>
+          <Card key={p.user_id} className="cursor-pointer hover:border-primary transition" onClick={() => openEmployee(p)}>
             <CardContent className="p-4 flex items-center gap-3">
               <Avatar className="h-12 w-12">
-                {p.avatar_url && <AvatarImage src={p.avatar_url} />}
                 <AvatarFallback>{(p.display_name ?? "??").slice(0, 2).toUpperCase()}</AvatarFallback>
               </Avatar>
               <div className="flex-1 min-w-0">
                 <p className="font-medium truncate">{p.display_name ?? "Unnamed"}</p>
+                <p className="text-xs text-muted-foreground truncate">{p.job_title || p.department || ""}</p>
                 <Badge variant="outline" className="mt-1 text-xs">{roleFor(p.user_id)}</Badge>
               </div>
               <Eye className="h-4 w-4 text-muted-foreground" />
@@ -236,11 +273,11 @@ export default function EmployeeDirectory() {
               <DialogHeader>
                 <div className="flex items-center gap-3">
                   <Avatar className="h-14 w-14">
-                    {selected.avatar_url && <AvatarImage src={selected.avatar_url} />}
                     <AvatarFallback>{(selected.display_name ?? "??").slice(0, 2).toUpperCase()}</AvatarFallback>
                   </Avatar>
                   <div className="flex-1">
                     <DialogTitle>{selected.display_name ?? "Unnamed"}</DialogTitle>
+                    <p className="text-sm text-muted-foreground">{selected.job_title || selected.department || selected.email}</p>
                     <Badge variant="outline" className="mt-1">{roleFor(selected.user_id)}</Badge>
                   </div>
                   <div className="flex gap-2">
