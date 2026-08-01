@@ -59,6 +59,9 @@ export default function EmployeeDirectory() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deletingAgent, setDeletingAgent] = useState(false);
 
+  // ---- List filter: All Employees vs Agents Only ----
+  const [roleFilter, setRoleFilter] = useState<"all" | "agent">("all");
+
   const fetchProfilesAndRoles = async () => {
     const [p, r] = await Promise.all([
       supabase.from("profiles").select("*"),
@@ -129,7 +132,9 @@ export default function EmployeeDirectory() {
     setCreatingAgent(false);
 
     if (error || data?.error) {
-      toast.error(error?.message || data?.error || "Agent create nahi hua");
+      // Poora error console mai log karo taaki debug karna aasan ho
+      console.error("manage-agents create error:", error, data);
+      toast.error(data?.error || error?.message || "Agent create nahi hua — console check karein");
       return;
     }
 
@@ -149,7 +154,8 @@ export default function EmployeeDirectory() {
     setDeletingAgent(false);
 
     if (error || data?.error) {
-      toast.error(error?.message || data?.error || "Agent delete nahi hua");
+      console.error("manage-agents delete error:", error, data);
+      toast.error(data?.error || error?.message || "Agent delete nahi hua — console check karein");
       return;
     }
 
@@ -160,6 +166,11 @@ export default function EmployeeDirectory() {
   };
 
   const roleFor = (uid: string) => roles.find(r => r.user_id === uid)?.role ?? "employee";
+
+  const visibleProfiles = roleFilter === "agent"
+    ? profiles.filter(p => roleFor(p.user_id) === "agent")
+    : profiles;
+  const agentCount = profiles.filter(p => roleFor(p.user_id) === "agent").length;
 
   if (!canView) return <div className="p-8 text-center text-muted-foreground">Access restricted to Owner, Admin and HR.</div>;
   if (loading) return <div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
@@ -178,8 +189,30 @@ export default function EmployeeDirectory() {
         )}
       </div>
 
+      <div className="flex gap-2">
+        <Button
+          size="sm"
+          variant={roleFilter === "all" ? "default" : "outline"}
+          onClick={() => setRoleFilter("all")}
+        >
+          All Employees ({profiles.length})
+        </Button>
+        <Button
+          size="sm"
+          variant={roleFilter === "agent" ? "default" : "outline"}
+          onClick={() => setRoleFilter("agent")}
+        >
+          Agents Only ({agentCount})
+        </Button>
+      </div>
+
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {profiles.map(p => (
+        {visibleProfiles.length === 0 && (
+          <p className="text-sm text-muted-foreground col-span-full py-4">
+            {roleFilter === "agent" ? "Abhi koi agent nahi hai." : "Koi employee nahi mila."}
+          </p>
+        )}
+        {visibleProfiles.map(p => (
           <Card key={p.id} className="cursor-pointer hover:border-primary transition" onClick={() => openEmployee(p)}>
             <CardContent className="p-4 flex items-center gap-3">
               <Avatar className="h-12 w-12">
