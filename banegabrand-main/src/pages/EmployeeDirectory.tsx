@@ -62,7 +62,7 @@ export default function EmployeeDirectory() {
   // ---- List filter: All Employees vs Agents Only ----
   const [roleFilter, setRoleFilter] = useState<"all" | "agent">("all");
 
-  // ---- Agents fetched directly from DB (user_roles joined with profiles) ----
+  // ---- Agents fetched from DB (user_roles + profiles, joined client-side) ----
   const [agentProfiles, setAgentProfiles] = useState<Profile[]>([]);
   const [agentsLoading, setAgentsLoading] = useState(false);
 
@@ -75,31 +75,48 @@ export default function EmployeeDirectory() {
     setRoles((r.data ?? []) as Role[]);
   };
 
-  // Agents ko seedha DB se search karo: user_roles mai role = 'agent',
-  // aur uske saath profiles table join karo. Ye general profiles fetch
-  // se independent hai, isliye agar wahan koi issue ho to bhi ye chalega.
+  // FIX: pehle ye embedded join se try ho raha tha
+  //   supabase.from("user_roles").select("user_id, profiles!inner(...)")
+  // par PostgREST ko user_roles <-> profiles ke beech koi FK relationship
+  // nahi mil raha tha (schema cache error). Isliye ab do alag queries
+  // karke result client-side join kar rahe hain — ye kisi FK/schema-cache
+  // pe depend nahi karta, hamesha kaam karega.
   const fetchAgents = async () => {
     setAgentsLoading(true);
-    const { data, error } = await supabase
+
+    const { data: roleRows, error: roleErr } = await supabase
       .from("user_roles")
-      .select("user_id, profiles!inner(user_id, display_name, email, department, job_title)")
+      .select("user_id")
       .eq("role", "agent");
 
-    if (error) {
-      console.error("fetchAgents error:", error);
-      toast.error("Agents load nahi ho paye: " + error.message);
+    if (roleErr) {
+      console.error("fetchAgents role error:", roleErr);
+      toast.error("Agents load nahi ho paye: " + roleErr.message);
       setAgentsLoading(false);
       return;
     }
 
-    const rows: Profile[] = (data ?? []).map((r: any) => ({
-      user_id: r.profiles.user_id,
-      display_name: r.profiles.display_name,
-      email: r.profiles.email,
-      department: r.profiles.department,
-      job_title: r.profiles.job_title,
-    }));
-    setAgentProfiles(rows);
+    const agentIds = Array.from(new Set((roleRows ?? []).map((r: any) => r.user_id)));
+
+    if (agentIds.length === 0) {
+      setAgentProfiles([]);
+      setAgentsLoading(false);
+      return;
+    }
+
+    const { data: profileRows, error: profileErr } = await supabase
+      .from("profiles")
+      .select("user_id, display_name, email, department, job_title")
+      .in("user_id", agentIds);
+
+    if (profileErr) {
+      console.error("fetchAgents profile error:", profileErr);
+      toast.error("Agent profiles load nahi ho paye: " + profileErr.message);
+      setAgentsLoading(false);
+      return;
+    }
+
+    setAgentProfiles((profileRows ?? []) as Profile[]);
     setAgentsLoading(false);
   };
 
@@ -164,7 +181,6 @@ export default function EmployeeDirectory() {
     setCreatingAgent(false);
 
     if (error || data?.error) {
-      // Poora error console mai log karo taaki debug karna aasan ho
       console.error("manage-agents create error:", error, data);
       toast.error(data?.error || error?.message || "Agent create nahi hua — console check karein");
       return;
