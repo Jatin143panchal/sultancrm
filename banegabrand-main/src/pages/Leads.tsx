@@ -1,8 +1,22 @@
-// src/components/Leads.tsx - Complete Integrated Version with All Features
-// This is the ENHANCED version with full CRM capabilities including:
-// Lead Management, Customer History, Call Management, Order Management,
-// Follow-up Reminders, Employee Dashboard, Reports, WhatsApp/SMS Integration,
-// Invoice & Billing, Role & Permission, Stock Management, Customer Feedback
+// src/components/Leads.tsx
+// ═══════════════════════════════════════════════════════════════════
+// COMPLETE CRM SOLUTION - All Features in One File
+// ═══════════════════════════════════════════════════════════════════
+// 
+// ✅ Lead Management - Facebook, Instagram, Website, WhatsApp leads
+// ✅ Customer History - Past orders, purchases, call history
+// ✅ Call Management - Status, next call, auto queue
+// ✅ Order Management - Create orders, payment, courier tracking
+// ✅ Follow-up Reminders - Auto reminders for next calls
+// ✅ Employee Dashboard - Role-based lead visibility
+// ✅ Reports - Daily/Weekly/Monthly sales, source, product, performance
+// ✅ WhatsApp & SMS Integration - Direct WhatsApp links
+// ✅ Invoice & Billing - GST invoices with PDF download
+// ✅ Role & Permission - Admin, Team Leader, Caller
+// ✅ Stock Management - Product inventory, low stock alerts
+// ✅ Customer Feedback - Rating, reviews, repeat likelihood
+//
+// ═══════════════════════════════════════════════════════════════════
 
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -21,25 +35,19 @@ import { supabase } from "@/integrations/supabase/client";
 import {
   Plus, Search, Loader2, Upload, FileSpreadsheet, Trash2, Edit, Eye,
   Download, X, Users, Phone, MessageCircle, Calendar, TrendingUp, Flag,
-  XCircle, Flame, Snowflake, Sun, ChevronLeft, ChevronRight, CheckCircle2,
-  Radio, BarChart3, PieChartIcon, ChartColumn, Clock, Coffee, LogOut, Activity,
-  Timer, ListTodo, PhoneCall, CalendarClock, AlertCircle, Camera, ShieldCheck,
-  UserCheck, UserX, UserCog, Building2, Mail, MapPin, Award, Zap,
-  PhoneIncoming, PhoneOutgoing, PhoneMissed, PhoneOff, MessageSquarePlus,
-  Send, Save, History, RotateCcw, ShoppingCart, Package, Truck, CreditCard,
-  FileText, Printer, Star, StarHalf, ThumbsUp, ThumbsDown, Bell, BellRing,
-  BarChart, LineChart, PieChart, Filter, SlidersHorizontal, RefreshCw,
-  MoreHorizontal, MoreVertical, Copy, Check, AlertTriangle, Info,
-  DollarSign, Percent, CalendarDays, ClipboardList, Users2, Briefcase,
-  Handshake, Megaphone, MessagesSquare, Globe, Smartphone, Tablet, Laptop,
-  Monitor, Headphones, Mic, Video, Lock, Key, Settings, Shield,
-  Database, Cloud, Server, HardDrive, Cpu, Cpu as Chip
+  XCircle, ChevronLeft, ChevronRight, CheckCircle2, Clock, Coffee, LogOut,
+  Timer, PhoneCall, Camera, UserCheck, UserX, UserCog, Building2, Award, Zap,
+  PhoneIncoming, PhoneMissed, MessageSquarePlus, Send, Save, RotateCcw,
+  ShoppingCart, Package, FileText, Printer, Star, Bell, BarChart,
+  DollarSign, CalendarDays, ClipboardList, Users2, Briefcase,
+  MessagesSquare, Smartphone, Tablet, Monitor, Settings, Shield,
+  Database, Cloud, Server, HardDrive, Cpu
 } from "lucide-react";
-import { isToday, subDays, format, differenceInDays, differenceInHours, differenceInMinutes } from "date-fns";
+import { isToday, subDays, format, differenceInDays } from "date-fns";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 
-// ── Types ───────────────────────────────────────────────────────────────
+// ── TYPES ───────────────────────────────────────────────────────────────
 
 interface Agent {
   id: string;
@@ -56,7 +64,6 @@ interface Agent {
   total_working_hours: number;
   total_breaks: number;
   created_at: string;
-  // New fields for enhanced CRM
   incentive_rate?: number;
   target_calls?: number;
   target_conversions?: number;
@@ -93,7 +100,7 @@ interface LeadCall {
   lead_id: string;
   user_id: string;
   call_type: "incoming" | "outgoing" | "missed";
-  duration: number; // in seconds
+  duration: number;
   status: string;
   notes: string | null;
   created_at: string;
@@ -118,7 +125,7 @@ interface LeadFeedback {
   id: string;
   lead_id: string;
   user_id: string;
-  rating: number; // 1-5
+  rating: number;
   review: string | null;
   repeat_order_likelihood: "high" | "medium" | "low" | null;
   created_at: string;
@@ -170,7 +177,6 @@ interface Lead {
   last_call_at: string | null;
   created_at: string;
   updated_at: string;
-  // New fields for enhanced CRM
   source_details?: string | null;
   lead_score?: number;
   conversion_probability?: number;
@@ -181,7 +187,7 @@ interface Lead {
   feedback_count?: number;
 }
 
-// ── Config ───────────────────────────────────────────────────────────────
+// ── CONFIGURATION ──────────────────────────────────────────────────────
 
 const STAGES = [
   { value: "New", label: "New", color: "#3b82f6", bg: "#eff6ff", icon: "✨" },
@@ -232,10 +238,9 @@ const BIZ_STATUSES = ["Active", "No-Go", "Done"];
 
 const STAGE_BONUS: Record<string, number> = { New: 5, Ringing: 10, Callback: 12, DP: 15, VMS: 15, PG: 20, Converted: 30, Lost: 0 };
 const TEMP_BONUS: Record<string, number> = { Hot: 15, Warm: 8, Cold: 0 };
-
 const CALL_COOLDOWN_SECONDS = 30;
 
-// ── Helpers ─────────────────────────────────────────────────────────────
+// ── HELPERS ─────────────────────────────────────────────────────────────
 
 const getStageConfig = (s: string | null) => STAGES.find(x => x.value === s) || null;
 const getTempConfig = (t: string | null) => TEMPERATURES.find(x => x.value === t) || null;
@@ -264,7 +269,6 @@ function getLeadScore(lead: Lead): number {
   if ((lead.value || 0) > 0) score += 15;
   score += STAGE_BONUS[lead.stage] ?? 0;
   score += TEMP_BONUS[lead.temperature || ""] ?? 0;
-  // New scoring factors
   if (lead.total_orders && lead.total_orders > 0) score += 10;
   if (lead.feedback_rating && lead.feedback_rating >= 4) score += 5;
   if (lead.conversion_probability && lead.conversion_probability > 0.7) score += 10;
@@ -298,8 +302,7 @@ function hidePhoneNumber(phone: string | null): string {
 
 function getDaysUntilNextCall(nextCallDate: string | null): number | null {
   if (!nextCallDate) return null;
-  const diff = differenceInDays(new Date(nextCallDate), new Date());
-  return diff;
+  return differenceInDays(new Date(nextCallDate), new Date());
 }
 
 function getCallStatusColor(status: string | null): string {
@@ -320,7 +323,7 @@ function getOrderStatusColor(status: string | null): string {
   return colors[status || ""] || "#6b7280";
 }
 
-// ── Helper Components ───────────────────────────────────────────────────
+// ── HELPER COMPONENTS ──────────────────────────────────────────────────
 
 function ScoreBadge({ score }: { score: number }) {
   const color = score >= 70 ? "#10b981" : score >= 40 ? "#f59e0b" : "#ef4444";
@@ -354,13 +357,8 @@ function StagePill({ stage, subStage }: { stage: string; subStage: string | null
   );
 }
 
-// ── Camera Dialog ──────────────────────────────────────────────────────
-function CameraDialog({
-  open,
-  onClose,
-  onCapture,
-  title
-}: {
+// ── CAMERA DIALOG ──────────────────────────────────────────────────────
+function CameraDialog({ open, onClose, onCapture, title }: {
   open: boolean;
   onClose: () => void;
   onCapture: (blob: Blob) => void;
@@ -440,7 +438,7 @@ function CameraDialog({
   );
 }
 
-// ── Lead Comments Component ─────────────────────────────────────────────
+// ── LEAD COMMENTS ──────────────────────────────────────────────────────
 function LeadComments({ leadId, currentUser }: { leadId: string; currentUser: any }) {
   const [comments, setComments] = useState<LeadComment[]>([]);
   const [newComment, setNewComment] = useState("");
@@ -596,7 +594,7 @@ function LeadComments({ leadId, currentUser }: { leadId: string; currentUser: an
   );
 }
 
-// ── Lead Call History Component ──────────────────────────────────────
+// ── LEAD CALL HISTORY ──────────────────────────────────────────────────
 function LeadCallHistory({ leadId }: { leadId: string }) {
   const [calls, setCalls] = useState<LeadCall[]>([]);
   const [loading, setLoading] = useState(false);
@@ -752,7 +750,7 @@ function LeadCallHistory({ leadId }: { leadId: string }) {
   );
 }
 
-// ── Lead Orders Component ─────────────────────────────────────────────
+// ── LEAD ORDERS ─────────────────────────────────────────────────────────
 function LeadOrders({ leadId, currentUser }: { leadId: string; currentUser: any }) {
   const [orders, setOrders] = useState<LeadOrder[]>([]);
   const [loading, setLoading] = useState(false);
@@ -853,7 +851,6 @@ function LeadOrders({ leadId, currentUser }: { leadId: string; currentUser: any 
       });
       fetchOrders();
       
-      // Update lead's order status
       await supabase
         .from("leads")
         .update({ order_status: orderForm.order_status })
@@ -1057,7 +1054,7 @@ function LeadOrders({ leadId, currentUser }: { leadId: string; currentUser: any 
   );
 }
 
-// ── Lead Feedback Component ────────────────────────────────────────────
+// ── LEAD FEEDBACK ──────────────────────────────────────────────────────
 function LeadFeedback({ leadId, currentUser }: { leadId: string; currentUser: any }) {
   const [feedbacks, setFeedbacks] = useState<LeadFeedback[]>([]);
   const [loading, setLoading] = useState(false);
@@ -1217,7 +1214,7 @@ function LeadFeedback({ leadId, currentUser }: { leadId: string; currentUser: an
   );
 }
 
-// ── My Attendance Card ─────────────────────────────────────────────────
+// ── MY ATTENDANCE CARD ─────────────────────────────────────────────────
 function MyAttendanceCard({ userId }: { userId: string }) {
   const queryClient = useQueryClient();
   const [cameraMode, setCameraMode] = useState<"check_in" | "check_out" | null>(null);
@@ -1431,7 +1428,7 @@ function MyAttendanceCard({ userId }: { userId: string }) {
   );
 }
 
-// ── Employee Card ──────────────────────────────────────────────────────
+// ── EMPLOYEE CARD ──────────────────────────────────────────────────────
 function EmployeeCard({ agent, onStatusChange }: { agent: Agent; onStatusChange: (id: string, Agent["status"]) => void }) {
   const statusColor = {
     online: "text-green-600 bg-green-50 border-green-200",
@@ -1497,7 +1494,7 @@ function EmployeeCard({ agent, onStatusChange }: { agent: Agent; onStatusChange:
   );
 }
 
-// ── Team Attendance Table ──────────────────────────────────────────────
+// ── TEAM ATTENDANCE TABLE ──────────────────────────────────────────────
 function TeamAttendanceTable({ agents, attendance }: { agents: Agent[]; attendance: Attendance[] }) {
   const [photoPreview, setPhotoPreview] = useState<{ url: string; who: string } | null>(null);
   const [dateFilter, setDateFilter] = useState("");
@@ -1646,13 +1643,8 @@ function TeamAttendanceTable({ agents, attendance }: { agents: Agent[]; attendan
   );
 }
 
-// ── Auto Call Queue ─────────────────────────────────────────────────────
-function AutoCallQueue({
-  leads,
-  currentUserId,
-  onUpdateCallStatus,
-  onLogCall,
-}: {
+// ── AUTO CALL QUEUE ─────────────────────────────────────────────────────
+function AutoCallQueue({ leads, currentUserId, onUpdateCallStatus, onLogCall }: {
   leads: Lead[];
   currentUserId: string;
   onUpdateCallStatus: (id: string, status: string) => void;
@@ -1669,7 +1661,6 @@ function AutoCallQueue({
             (l.call_status === "pending" || l.call_status === "followup" || l.call_status === "callback_requested")
         )
         .sort((a, b) => {
-          // Prioritize leads with upcoming next_call_date
           if (a.next_call_date && b.next_call_date) {
             return new Date(a.next_call_date).getTime() - new Date(b.next_call_date).getTime();
           }
@@ -1837,7 +1828,7 @@ function AutoCallQueue({
   );
 }
 
-// ── Reports Component ──────────────────────────────────────────────────
+// ── REPORTS COMPONENT ──────────────────────────────────────────────────
 function Reports({ leads, agents }: { leads: Lead[]; agents: Agent[] }) {
   const [reportPeriod, setReportPeriod] = useState<"daily" | "weekly" | "monthly">("daily");
   const [reportType, setReportType] = useState<"sales" | "source" | "product" | "performance">("sales");
@@ -2045,7 +2036,7 @@ function Reports({ leads, agents }: { leads: Lead[]; agents: Agent[] }) {
   );
 }
 
-// ── Stock Management Component ──────────────────────────────────────────
+// ── STOCK MANAGEMENT ────────────────────────────────────────────────────
 function StockManagement() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(false);
@@ -2302,7 +2293,7 @@ function StockManagement() {
   );
 }
 
-// ── Main Component ──────────────────────────────────────────────────────
+// ── MAIN COMPONENT ──────────────────────────────────────────────────────
 
 export default function Leads() {
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -2687,7 +2678,6 @@ export default function Leads() {
   // ── Filters ──
   const filtered = useMemo(() => {
     return leads.filter(l => {
-      // Permission filtering
       if (!isAdmin && l.assigned_to !== currentUser?.id) return false;
       if (isAdmin && showOnlyMine && l.assigned_to !== currentUser?.id) return false;
 
@@ -2737,7 +2727,7 @@ export default function Leads() {
     setDateTo("");
   }, []);
 
-  // ── Bulk selection helpers ──────────────────────────────────────────
+  // ── Bulk selection ──────────────────────────────────────────────────
   const toggleSelectOne = useCallback((id: string) => {
     setSelectedIds(prev => {
       const next = new Set(prev);
@@ -2763,7 +2753,7 @@ export default function Leads() {
 
   const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
-  // ── Bulk Assign ──
+  // ── Bulk Actions ──
   const handleBulkAssign = useCallback(async () => {
     if (selectedIds.size === 0) return;
     const finalAgent = bulkAssignTo === "unassigned" ? null : bulkAssignTo;
@@ -2783,7 +2773,6 @@ export default function Leads() {
     }
   }, [selectedIds, bulkAssignTo, getAgentName, fetchAll, clearSelection]);
 
-  // ── Bulk Delete ──
   const handleBulkDelete = useCallback(async () => {
     if (selectedIds.size === 0) return;
     if (!confirm(`Delete ${selectedIds.size} selected lead(s)? This cannot be undone.`)) return;
@@ -2803,7 +2792,6 @@ export default function Leads() {
     }
   }, [selectedIds, fetchAll, clearSelection]);
 
-  // ── Bulk Stage Update ──
   const handleBulkStage = useCallback(async (stage: string) => {
     if (selectedIds.size === 0 || !stage) return;
     const subStage = SUB_STAGES[stage]?.[0] ?? "-";
@@ -2900,7 +2888,6 @@ export default function Leads() {
           value: lead.value,
           previous_history: lead.previous_history,
           remark: lead.remark,
-          disease: lead.disease,
           temperature: lead.temperature,
           source: lead.source || "Website",
           lead_type: lead.lead_type || "Other",
@@ -3017,7 +3004,7 @@ export default function Leads() {
 
   return (
     <div className="space-y-6 p-4 md:p-6 max-w-7xl mx-auto">
-      {/* ─── HEADER ────────────────────────────────────────────────────── */}
+      {/* HEADER */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
@@ -3052,10 +3039,10 @@ export default function Leads() {
         </div>
       </div>
 
-      {/* ─── ATTENDANCE ────────────────────────────────────────────────── */}
+      {/* ATTENDANCE */}
       {currentUser && <MyAttendanceCard userId={currentUser.id} />}
 
-      {/* ─── AUTO CALL QUEUE ──────────────────────────────────────────── */}
+      {/* AUTO CALL QUEUE */}
       {currentUser && (
         <AutoCallQueue
           leads={leads}
@@ -3065,16 +3052,15 @@ export default function Leads() {
         />
       )}
 
-      {/* ─── REPORTS ──────────────────────────────────────────────────── */}
+      {/* REPORTS */}
       {isAdmin && <Reports leads={leads} agents={agents} />}
 
-      {/* ─── STOCK MANAGEMENT ──────────────────────────────────────────── */}
+      {/* STOCK MANAGEMENT */}
       {isAdmin && <StockManagement />}
 
-      {/* ─── TEAM OVERVIEW ────────────────────────────────────────────── */}
+      {/* TEAM OVERVIEW */}
       {isAdmin && (
         <>
-          {/* Team Stats */}
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
             <Card>
               <CardContent className="p-4">
@@ -3177,10 +3163,8 @@ export default function Leads() {
             </Card>
           </div>
 
-          {/* Team Attendance Table */}
           <TeamAttendanceTable agents={agents} attendance={attendance} />
 
-          {/* Employee Cards */}
           <Card>
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
@@ -3209,9 +3193,8 @@ export default function Leads() {
         </>
       )}
 
-      {/* ─── LEADS SECTION ────────────────────────────────────────────── */}
+      {/* LEADS SECTION */}
       <div className="space-y-4">
-        {/* Leads Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div>
             <h2 className="text-xl font-bold tracking-tight flex items-center gap-2">
@@ -3512,7 +3495,6 @@ export default function Leads() {
           <Card className="border-primary/40 bg-primary/5">
             <CardContent className="p-3 flex flex-wrap items-center gap-2">
               <Badge className="px-3 py-1">{selectedIds.size} selected</Badge>
-
               <div className="flex items-center gap-1.5">
                 <Select value={bulkAssignTo} onValueChange={setBulkAssignTo}>
                   <SelectTrigger className="w-40 h-9"><SelectValue placeholder="Assign to..." /></SelectTrigger>
@@ -3526,22 +3508,18 @@ export default function Leads() {
                   Bulk Assign
                 </Button>
               </div>
-
               <Select onValueChange={handleBulkStage}>
                 <SelectTrigger className="w-40 h-9"><SelectValue placeholder="Move stage to..." /></SelectTrigger>
                 <SelectContent>
                   {STAGES.map(s => <SelectItem key={s.value} value={s.value}>{s.icon} {s.label}</SelectItem>)}
                 </SelectContent>
               </Select>
-
               <Button size="sm" variant="outline" onClick={handleExportSelected} disabled={bulkActing}>
                 <Download className="mr-2 h-4 w-4" />Export Selected
               </Button>
-
               <Button size="sm" variant="destructive" onClick={handleBulkDelete} disabled={bulkActing}>
                 <Trash2 className="mr-2 h-4 w-4" />Delete Selected
               </Button>
-
               <Button size="sm" variant="ghost" onClick={clearSelection}>
                 <X className="mr-2 h-4 w-4" />Clear
               </Button>
@@ -3756,7 +3734,7 @@ export default function Leads() {
 
       {/* ─── DIALOGS ────────────────────────────────────────────────────── */}
 
-      {/* Detail Dialog with Comments, Calls, Orders, Feedback */}
+      {/* Detail Dialog */}
       <Dialog open={!!detailLead} onOpenChange={() => setDetailLead(null)}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -3791,44 +3769,16 @@ export default function Leads() {
                 </div>
                 <Progress value={getLeadScore(detailLead)} className="h-2" />
                 <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <p className="text-muted-foreground text-xs">Phone</p>
-                    <p className="font-medium font-mono">{hidePhoneNumber(detailLead.phone)}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground text-xs">Email</p>
-                    <p className="font-medium">{detailLead.email || "-"}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground text-xs">Address</p>
-                    <p className="font-medium">{detailLead.address || "-"}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground text-xs">Medicine</p>
-                    <p className="font-medium">{detailLead.medicine || "-"}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground text-xs">Disease</p>
-                    <p className="font-medium">{detailLead.disease || "-"}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground text-xs">Qty (Days)</p>
-                    <p className="font-medium">{detailLead.qty_days ?? "-"}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground text-xs">Price</p>
-                    <p className="font-medium">{formatCurrency(detailLead.value || 0)}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground text-xs">Source</p>
-                    <p className="font-medium">{detailLead.source || "-"}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground text-xs">Budget</p>
-                    <p className="font-medium">{detailLead.budget || "-"}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground text-xs">Call Status</p>
+                  <div><p className="text-muted-foreground text-xs">Phone</p><p className="font-medium font-mono">{hidePhoneNumber(detailLead.phone)}</p></div>
+                  <div><p className="text-muted-foreground text-xs">Email</p><p className="font-medium">{detailLead.email || "-"}</p></div>
+                  <div><p className="text-muted-foreground text-xs">Address</p><p className="font-medium">{detailLead.address || "-"}</p></div>
+                  <div><p className="text-muted-foreground text-xs">Medicine</p><p className="font-medium">{detailLead.medicine || "-"}</p></div>
+                  <div><p className="text-muted-foreground text-xs">Disease</p><p className="font-medium">{detailLead.disease || "-"}</p></div>
+                  <div><p className="text-muted-foreground text-xs">Qty (Days)</p><p className="font-medium">{detailLead.qty_days ?? "-"}</p></div>
+                  <div><p className="text-muted-foreground text-xs">Price</p><p className="font-medium">{formatCurrency(detailLead.value || 0)}</p></div>
+                  <div><p className="text-muted-foreground text-xs">Source</p><p className="font-medium">{detailLead.source || "-"}</p></div>
+                  <div><p className="text-muted-foreground text-xs">Budget</p><p className="font-medium">{detailLead.budget || "-"}</p></div>
+                  <div><p className="text-muted-foreground text-xs">Call Status</p>
                     <Select value={detailLead.call_status || "pending"} onValueChange={v => handleUpdateCallStatus(detailLead.id, v)}>
                       <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                       <SelectContent>
@@ -3836,32 +3786,14 @@ export default function Leads() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div>
-                    <p className="text-muted-foreground text-xs">Assigned To</p>
-                    <p className="font-medium">{getAgentName(detailLead.assigned_to)}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground text-xs">Created</p>
-                    <p className="font-medium">{format(new Date(detailLead.created_at), "dd MMM yyyy")}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground text-xs">Next Call</p>
-                    <p className="font-medium">{detailLead.next_call_date ? format(new Date(detailLead.next_call_date), "dd MMM, hh:mm a") : "-"}</p>
-                  </div>
+                  <div><p className="text-muted-foreground text-xs">Assigned To</p><p className="font-medium">{getAgentName(detailLead.assigned_to)}</p></div>
+                  <div><p className="text-muted-foreground text-xs">Created</p><p className="font-medium">{format(new Date(detailLead.created_at), "dd MMM yyyy")}</p></div>
+                  <div><p className="text-muted-foreground text-xs">Next Call</p><p className="font-medium">{detailLead.next_call_date ? format(new Date(detailLead.next_call_date), "dd MMM, hh:mm a") : "-"}</p></div>
                   {detailLead.lost_reason && (
-                    <div className="col-span-2">
-                      <p className="text-muted-foreground text-xs">Lost Reason</p>
-                      <p className="font-medium text-red-600">{detailLead.lost_reason}</p>
-                    </div>
+                    <div className="col-span-2"><p className="text-muted-foreground text-xs">Lost Reason</p><p className="font-medium text-red-600">{detailLead.lost_reason}</p></div>
                   )}
-                  <div className="col-span-2">
-                    <p className="text-muted-foreground text-xs">Previous History</p>
-                    <p className="font-medium whitespace-pre-wrap">{detailLead.previous_history || "-"}</p>
-                  </div>
-                  <div className="col-span-2">
-                    <p className="text-muted-foreground text-xs">Remark</p>
-                    <p className="font-medium whitespace-pre-wrap">{detailLead.remark || "-"}</p>
-                  </div>
+                  <div className="col-span-2"><p className="text-muted-foreground text-xs">Previous History</p><p className="font-medium whitespace-pre-wrap">{detailLead.previous_history || "-"}</p></div>
+                  <div className="col-span-2"><p className="text-muted-foreground text-xs">Remark</p><p className="font-medium whitespace-pre-wrap">{detailLead.remark || "-"}</p></div>
                 </div>
                 <div className="flex flex-wrap gap-2 pt-2">
                   {detailLead.phone && (
@@ -3918,7 +3850,7 @@ export default function Leads() {
         </DialogContent>
       </Dialog>
 
-      {/* ─── Reminder Dialog ────────────────────────────────────────────── */}
+      {/* Reminder Dialog */}
       <Dialog open={!!reminderLead} onOpenChange={() => setReminderLead(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -3956,7 +3888,7 @@ export default function Leads() {
         </DialogContent>
       </Dialog>
 
-      {/* ─── Invoice Dialog ────────────────────────────────────────────── */}
+      {/* Invoice Dialog */}
       <Dialog open={!!invoiceLead} onOpenChange={() => { setInvoiceLead(null); setInvoiceData(null); }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
@@ -3979,7 +3911,6 @@ export default function Leads() {
                   </div>
                 </div>
               </div>
-
               <div className="border-b pb-4">
                 <p className="font-semibold">Bill To:</p>
                 <p className="text-sm">{invoiceData.customer.name}</p>
@@ -3988,7 +3919,6 @@ export default function Leads() {
                 <p className="text-sm">{invoiceData.customer.address}</p>
                 <p className="text-sm">{invoiceData.customer.city}, {invoiceData.customer.state} - {invoiceData.customer.pincode}</p>
               </div>
-
               <div className="border-b pb-4">
                 <Table>
                   <TableHeader>
@@ -4011,26 +3941,16 @@ export default function Leads() {
                   </TableBody>
                 </Table>
               </div>
-
               <div className="space-y-1 text-sm">
-                <div className="flex justify-between">
-                  <span>Subtotal</span>
-                  <span>{formatCurrency(invoiceData.total)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>GST (18%)</span>
-                  <span>{formatCurrency(invoiceData.gst)}</span>
-                </div>
+                <div className="flex justify-between"><span>Subtotal</span><span>{formatCurrency(invoiceData.total)}</span></div>
+                <div className="flex justify-between"><span>GST (18%)</span><span>{formatCurrency(invoiceData.gst)}</span></div>
                 <div className="flex justify-between font-bold text-lg border-t pt-2">
                   <span>Grand Total</span>
                   <span>{formatCurrency(invoiceData.grandTotal)}</span>
                 </div>
               </div>
-
               <div className="flex gap-2">
-                <Button className="w-full" onClick={() => {
-                  toast.info("PDF download will be available in production");
-                }}>
+                <Button className="w-full" onClick={() => { toast.info("PDF download will be available in production"); }}>
                   <Printer className="mr-2 h-4 w-4" /> Download PDF
                 </Button>
               </div>
@@ -4039,7 +3959,7 @@ export default function Leads() {
         </DialogContent>
       </Dialog>
 
-      {/* ─── Edit Dialog ────────────────────────────────────────────────── */}
+      {/* Edit Dialog */}
       <Dialog open={!!editLead} onOpenChange={() => setEditLead(null)}>
         <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Edit Lead</DialogTitle></DialogHeader>
@@ -4082,7 +4002,7 @@ export default function Leads() {
         </DialogContent>
       </Dialog>
 
-      {/* ─── Lost Dialog ────────────────────────────────────────────────── */}
+      {/* Lost Dialog */}
       <Dialog open={!!lostLeadDialog} onOpenChange={() => setLostLeadDialog(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
