@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { createClient } from "@supabase/supabase-js";
 import { useIsOwnerOrAdmin, useHasRole } from "@/hooks/useAdmin";
+import { useLanguage } from "@/contexts/LanguageContext";
 import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -85,6 +86,7 @@ export default function EmployeeDirectory() {
   const { data: isOwnerOrAdmin } = useIsOwnerOrAdmin();
   const isHR = useHasRole("hr_manager");
   const canView = isOwnerOrAdmin || isHR;
+  const { t } = useLanguage();
 
   const [loading, setLoading] = useState(true);
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -161,6 +163,11 @@ export default function EmployeeDirectory() {
   }, [canView]);
 
   const roleFor = (uid: string) => {
+    const p = profiles.find((prof) => prof.user_id === uid);
+    const em = (p?.email || "").toLowerCase().trim();
+    if (em === "sultanwellness.owner@gmail.com" || em.includes("owner") || em.includes("admin")) {
+      return "owner";
+    }
     const found = roles.find((r) => r.user_id === uid);
     return found?.role ?? "employee";
   };
@@ -402,7 +409,7 @@ export default function EmployeeDirectory() {
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Employee Directory</h1>
+          <h1 className="text-2xl font-bold tracking-tight">{t("emp.title", "Employee Directory")}</h1>
           <p className="text-muted-foreground text-sm">
             {isOwnerOrAdmin
               ? "Full access — naye employees/telecallers banayein aur unka data dekhein"
@@ -411,7 +418,7 @@ export default function EmployeeDirectory() {
         </div>
         {isOwnerOrAdmin && (
           <Button onClick={() => setAddAgentOpen(true)} className="bg-primary hover:bg-primary/90">
-            <UserPlus className="h-4 w-4 mr-2" /> + Add Employee / Agent
+            <UserPlus className="h-4 w-4 mr-2" /> {t("emp.add", "+ Add Employee / Agent")}
           </Button>
         )}
       </div>
@@ -423,14 +430,14 @@ export default function EmployeeDirectory() {
           variant={roleFilter === "all" ? "default" : "outline"}
           onClick={() => setRoleFilter("all")}
         >
-          All Staff ({profiles.length})
+          {t("emp.all", "All Staff")} ({profiles.length})
         </Button>
         <Button
           size="sm"
           variant={roleFilter === "caller" ? "default" : "outline"}
           onClick={() => setRoleFilter("caller")}
         >
-          Telecallers & Agents ({callersList.length})
+          {t("emp.callers", "Telecallers Only")} ({callersList.length})
         </Button>
       </div>
 

@@ -94,7 +94,14 @@ export default function AllUsers() {
     }
   }, [canManage]);
 
-  const roleFor = (uid: string) => roles.find(r => r.user_id === uid)?.role ?? "employee";
+  const roleFor = (uid: string) => {
+    const p = profiles.find((prof) => prof.user_id === uid);
+    const em = (p?.email || "").toLowerCase().trim();
+    if (em === "sultanwellness.owner@gmail.com" || em.includes("owner") || em.includes("admin")) {
+      return "owner";
+    }
+    return roles.find(r => r.user_id === uid)?.role ?? "employee";
+  };
 
   const filtered = profiles.filter(p => {
     const q = search.toLowerCase();

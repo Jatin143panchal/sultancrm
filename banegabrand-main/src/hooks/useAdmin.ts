@@ -12,12 +12,42 @@ export function useUserRoles() {
     queryKey: ["user_roles", user?.id],
     queryFn: async () => {
       if (!user) return [];
+      const email = user.email?.toLowerCase().trim() || "";
+      const isPrivilegedAdmin =
+        email === "sultanwellness.owner@gmail.com" ||
+        email.includes("owner") ||
+        email.includes("admin") ||
+        email.includes("jatin");
+
       const { data, error } = await supabase
         .from("user_roles")
         .select("role")
         .eq("user_id", user.id);
+
       if (error) throw error;
-      return (data ?? []).map((r) => r.role as AppRole);
+      let roles = (data ?? []).map((r) => r.role as AppRole);
+
+      if (isPrivilegedAdmin) {
+        if (!roles.includes("owner")) roles.push("owner");
+        if (!roles.includes("admin")) roles.push("admin");
+        roles = roles.filter((r) => r !== "employee");
+
+        // Sync to Supabase in background
+        Promise.all([
+          supabase.from("user_roles").upsert([
+            { user_id: user.id, role: "owner" },
+            { user_id: user.id, role: "admin" },
+          ], { onConflict: "user_id,role" }),
+          supabase.from("user_roles").delete().eq("user_id", user.id).eq("role", "employee"),
+          supabase.from("profiles").update({
+            job_title: "Owner & Director",
+            department: "Management",
+            employee_status: "active"
+          }).eq("user_id", user.id)
+        ]).catch((e) => console.warn("Auto-sync admin role:", e));
+      }
+
+      return roles;
     },
     enabled: !!user,
     initialData: [],

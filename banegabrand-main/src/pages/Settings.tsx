@@ -194,9 +194,9 @@ function CompanySection() {
         <CardDescription>Update your company information</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4 max-w-lg">
-        <div className="grid gap-2"><Label>Company Name</Label><Input defaultValue="BanegaBrand Pvt Ltd" /></div>
-        <div className="grid gap-2"><Label>Industry</Label><Input defaultValue="Technology & Consulting" /></div>
-        <div className="grid gap-2"><Label>Website</Label><Input defaultValue="https://banegabrand.com" /></div>
+        <div className="grid gap-2"><Label>Company Name</Label><Input defaultValue="Sultan Wellness Pvt Ltd" /></div>
+        <div className="grid gap-2"><Label>Industry</Label><Input defaultValue="Ayurvedic & Healthcare" /></div>
+        <div className="grid gap-2"><Label>Website</Label><Input defaultValue="https://sultanwellness.com" /></div>
         <div className="grid gap-2"><Label>Phone</Label><Input defaultValue="+91 11 2345 6789" /></div>
         <div className="grid gap-2"><Label>Address</Label><Textarea rows={2} defaultValue="New Delhi, India" /></div>
         <div className="grid gap-2"><Label>GST Number</Label><Input placeholder="Enter GST number" /></div>
@@ -371,8 +371,8 @@ function EmailSettingSection() {
             <div className="grid gap-2"><Label>SMTP Port</Label><Input type="number" value={f.smtp_port || 587} onChange={e => set("smtp_port", parseInt(e.target.value))} /></div>
             <div className="grid gap-2"><Label>SMTP Username</Label><Input value={f.smtp_user || ""} onChange={e => set("smtp_user", e.target.value)} /></div>
             <div className="grid gap-2"><Label>SMTP Password</Label><Input type="password" value={f.smtp_password || ""} onChange={e => set("smtp_password", e.target.value)} /></div>
-            <div className="grid gap-2"><Label>From Name</Label><Input value={f.from_name || ""} onChange={e => set("from_name", e.target.value)} placeholder="BanegaBrand" /></div>
-            <div className="grid gap-2"><Label>From Email</Label><Input value={f.from_email || ""} onChange={e => set("from_email", e.target.value)} placeholder="noreply@banegabrand.com" /></div>
+            <div className="grid gap-2"><Label>From Name</Label><Input value={f.from_name || ""} onChange={e => set("from_name", e.target.value)} placeholder="Sultan Wellness Pvt Ltd" /></div>
+            <div className="grid gap-2"><Label>From Email</Label><Input value={f.from_email || ""} onChange={e => set("from_email", e.target.value)} placeholder="sultanwellness.owner@gmail.com" /></div>
             <div className="flex items-center gap-2"><Switch checked={f.is_active || false} onCheckedChange={c => set("is_active", c)} /><Label>Enable Email Sending</Label></div>
             <Button onClick={handleSave} disabled={insert.isPending || update.isPending}>
               {(insert.isPending || update.isPending) && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
@@ -674,7 +674,7 @@ function HelpSection() {
         ))}
         <div className="border-t pt-4">
           <p className="text-sm font-medium">Need more help?</p>
-          <p className="text-xs text-muted-foreground mt-1">Contact support at support@banegabrand.com or call +91 11 2345 6789</p>
+          <p className="text-xs text-muted-foreground mt-1">Contact support at sultanwellness.owner@gmail.com</p>
         </div>
       </CardContent>
     </Card>

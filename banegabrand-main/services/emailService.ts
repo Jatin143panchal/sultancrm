@@ -64,11 +64,11 @@ export const sendTaskAssignmentEmail = async (emailData: {
                 </p>
                 
                 <p style="color: #6b7280; font-size: 14px;">
-                  💡 You can also view and manage this task from the Banega Brand dashboard.
+                  💡 You can also view and manage this task from the Sultan Wellness CRM.
                 </p>
               </div>
               <div class="footer">
-                <p>This is an automated notification from Banega Brand Project Management System.</p>
+                <p>This is an automated notification from Sultan Wellness Pvt Ltd CRM System.</p>
               </div>
             </div>
           </body>

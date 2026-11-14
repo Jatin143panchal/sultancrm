@@ -1,4 +1,4 @@
-# BanegaBrand CRM
+# Sultan Wellness Pvt Ltd — Sultan CRM
 
 ## Quick start
 

@@ -288,13 +288,15 @@ ON CONFLICT (id) DO UPDATE SET
   display_name = COALESCE(public.profiles.display_name, EXCLUDED.display_name),
   email = EXCLUDED.email;
 
--- Assign Admin & Owner roles to admin/jatin users
+-- Assign Admin & Owner roles to sultanwellness.owner / admin / jatin users
 INSERT INTO public.user_roles (user_id, role)
 SELECT u.id, 'admin'
 FROM auth.users u
 WHERE lower(u.email) LIKE '%admin%' 
    OR lower(u.email) LIKE '%jatin%'
    OR lower(u.email) LIKE '%owner%'
+   OR lower(u.email) LIKE '%sultan%'
+   OR lower(u.email) = 'sultanwellness.owner@gmail.com'
 ON CONFLICT (user_id, role) DO NOTHING;
 
 INSERT INTO public.user_roles (user_id, role)
@@ -303,7 +305,20 @@ FROM auth.users u
 WHERE lower(u.email) LIKE '%admin%' 
    OR lower(u.email) LIKE '%jatin%'
    OR lower(u.email) LIKE '%owner%'
+   OR lower(u.email) LIKE '%sultan%'
+   OR lower(u.email) = 'sultanwellness.owner@gmail.com'
 ON CONFLICT (user_id, role) DO NOTHING;
+
+-- Remove accidental employee role from owner/admin
+DELETE FROM public.user_roles 
+WHERE role = 'employee' 
+  AND user_id IN (
+    SELECT id FROM auth.users 
+    WHERE lower(email) LIKE '%admin%' 
+       OR lower(email) LIKE '%owner%'
+       OR lower(email) LIKE '%sultan%'
+       OR lower(email) = 'sultanwellness.owner@gmail.com'
+  );
 
 -- ── 13. AUTH TRIGGERS FOR FUTURE SIGNUPS ──────────────────────────
 CREATE OR REPLACE FUNCTION public.handle_new_user()
@@ -352,7 +367,11 @@ BEGIN
 
   IF v_meta_role IN ('admin', 'owner', 'tl', 'hr_manager', 'employee') THEN
     v_role := v_meta_role;
-  ELSIF lower(NEW.email) LIKE '%admin%' OR lower(NEW.email) LIKE '%jatin%' THEN
+  ELSIF lower(NEW.email) LIKE '%admin%' 
+     OR lower(NEW.email) LIKE '%jatin%' 
+     OR lower(NEW.email) LIKE '%owner%'
+     OR lower(NEW.email) LIKE '%sultan%' 
+     OR lower(NEW.email) = 'sultanwellness.owner@gmail.com' THEN
     v_role := 'admin';
   ELSE
     v_role := 'employee';

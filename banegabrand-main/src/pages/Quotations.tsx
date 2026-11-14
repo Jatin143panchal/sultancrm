@@ -126,7 +126,7 @@ export default function Quotations() {
       h1{color:#1a1a1a;margin:0}h2{color:#666;margin:5px 0}.info{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin:20px 0}
       </style></head><body>
       <div class="header"><div><h1>QUOTATION</h1><h2>${q.quote_number}</h2></div>
-      <div style="text-align:right"><h2>BanegaBrand Pvt Ltd</h2><p>Date: ${new Date(q.created_at).toLocaleDateString()}</p>
+      <div style="text-align:right"><h2>Sultan Wellness Pvt Ltd</h2><p>Date: ${new Date(q.created_at).toLocaleDateString()}</p>
       ${q.valid_until ? `<p>Valid Until: ${new Date(q.valid_until).toLocaleDateString()}</p>` : ""}</div></div>
       <div class="info"><div><h3>Bill To:</h3><p><strong>${q.client_name}</strong></p>
       ${q.client_company ? `<p>${q.client_company}</p>` : ""}

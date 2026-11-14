@@ -25,6 +25,7 @@ import Landing from "./pages/Landing";
 import NotFound from "./pages/NotFound";
 import AllUsers from "./pages/AllUsers";
 import { RoleGuard } from "@/components/RoleGuard";
+import { LanguageProvider } from "@/contexts/LanguageContext";
 import Projects from "./pages/Projects";
 import TeamAttendance from "./pages/TeamAttendance";
 
@@ -93,10 +94,12 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <AuthProvider>
-          <Routes>
-            <Route path="/auth" element={<AuthRoute />} />
-            <Route path="/*" element={<ProtectedRoutes />} />
-          </Routes>
+          <LanguageProvider>
+            <Routes>
+              <Route path="/auth" element={<AuthRoute />} />
+              <Route path="/*" element={<ProtectedRoutes />} />
+            </Routes>
+          </LanguageProvider>
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>

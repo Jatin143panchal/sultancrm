@@ -33,6 +33,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useLanguage } from "@/contexts/LanguageContext";
 import {
   Plus, Search, Loader2, Upload, FileSpreadsheet, Trash2, Edit, Eye,
   Download, X, Users, Phone, MessageCircle, Calendar, TrendingUp, Flag,
@@ -2786,6 +2787,7 @@ function StockManagement() {
 // ── MAIN COMPONENT ──────────────────────────────────────────────────────
 
 export default function Leads() {
+  const { t } = useLanguage();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
@@ -2859,8 +2861,15 @@ export default function Leads() {
         .select("role")
         .eq("user_id", data.user.id);
         
+      const email = data.user.email?.toLowerCase().trim() || "";
+      const isKnownAdmin =
+        email === "sultanwellness.owner@gmail.com" ||
+        email.includes("owner") ||
+        email.includes("admin") ||
+        email.includes("jatin");
+
       const userRoles = (rolesData || []).map(r => r.role);
-      const isAdm = userRoles.includes("admin") || userRoles.includes("owner");
+      const isAdm = isKnownAdmin || userRoles.includes("admin") || userRoles.includes("owner");
       const isTl = isAdm || userRoles.includes("tl");
       setIsAdmin(isAdm);
       setIsTeamLeader(isTl);
@@ -3729,7 +3738,7 @@ export default function Leads() {
           <div>
             <h2 className="text-xl font-bold tracking-tight flex items-center gap-2">
               <Zap className="h-5 w-5 text-primary" />
-              {isAdmin && !showOnlyMine ? "Lead Management" : "My Leads"}
+              {isAdmin && !showOnlyMine ? t("leads.title", "Lead Management") : t("leads.myleads", "My Leads")}
             </h2>
             <p className="text-muted-foreground text-sm">
               {isAdmin && !showOnlyMine ? "Track and manage all your leads in one place" : "Leads assigned to you — update stage & call status as you work them"}
@@ -3756,7 +3765,7 @@ export default function Leads() {
                   </SelectContent>
                 </Select>
                 <Button variant="outline" size="sm" onClick={() => handleExportByStage(exportStage)}>
-                  <Download className="mr-2 h-4 w-4" />Export
+                  <Download className="mr-2 h-4 w-4" />{t("leads.export", "Export")}
                 </Button>
               </div>
             )}
@@ -3772,7 +3781,7 @@ export default function Leads() {
               }}>
                 <DialogTrigger asChild>
                   <Button variant="outline" size="sm">
-                    <Upload className="mr-2 h-4 w-4" />Import
+                    <Upload className="mr-2 h-4 w-4" />{t("leads.import", "Import")}
                   </Button>
                 </DialogTrigger>
                 <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
@@ -3855,7 +3864,7 @@ export default function Leads() {
             <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
               <DialogTrigger asChild>
                 <Button size="sm">
-                  <Plus className="mr-2 h-4 w-4" />+ Add Lead
+                  <Plus className="mr-2 h-4 w-4" />{t("leads.add", "+ Add Lead")}
                 </Button>
               </DialogTrigger>
               <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">

@@ -111,7 +111,7 @@ export default function AdminDashboard() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Admin Dashboard</h1>
-        <p className="text-muted-foreground">Overall business overview for BanegaBrand</p>
+        <p className="text-muted-foreground">Overall business overview for Sultan Wellness Pvt Ltd</p>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">

@@ -114,7 +114,7 @@ export function TaskAssignment({
         .from("project_tasks")
         .update({
           assigned_to_email: assigneeEmail,
-          assigned_by_email: "system@banegabrand.com",
+          assigned_by_email: "sultanwellness.owner@gmail.com",
           status: "in_progress",
           updated_at: new Date().toISOString()
         })
@@ -128,7 +128,7 @@ export function TaskAssignment({
         .insert({
           task_id: task.id,
           assignee_email: assigneeEmail,
-          assigned_by_email: "system@banegabrand.com",
+          assigned_by_email: "sultanwellness.owner@gmail.com",
           status: "pending",
           notification_sent: false
         });
@@ -169,7 +169,7 @@ export function TaskAssignment({
           .insert({
             task_id: task.id,
             comment: comment.trim(),
-            created_by_email: "system@banegabrand.com"
+            created_by_email: "sultanwellness.owner@gmail.com"
           });
       }
 
@@ -287,7 +287,7 @@ export function TaskAssignment({
                   if (assignee) {
                     // Open email client
                     window.location.href = `mailto:${assigneeEmail}?subject=Task: ${task.task_name}&body=${encodeURIComponent(
-                      `Hello ${assignee.name},\n\nI have assigned you a new task:\n\nTask: ${task.task_name}\nProject: ${projectName}\nDescription: ${task.description || 'N/A'}\nDue Date: ${task.due_date ? format(new Date(task.due_date), "dd MMM yyyy") : 'N/A'}\n\nPlease check the project dashboard for more details.\n\nBest regards,\nBanega Brand Team`
+                      `Hello ${assignee.name},\n\nI have assigned you a new task:\n\nTask: ${task.task_name}\nProject: ${projectName}\nDescription: ${task.description || 'N/A'}\nDue Date: ${task.due_date ? format(new Date(task.due_date), "dd MMM yyyy") : 'N/A'}\n\nPlease check the project dashboard for more details.\n\nBest regards,\nSultan Wellness Pvt Ltd Team`
                     )}`;
                   }
                 }

@@ -21,6 +21,7 @@ import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
 import { useIsOwnerOrAdmin } from "@/hooks/useAdmin";
 import { useAuth } from "@/contexts/AuthContext";
+import { useLanguage } from "@/contexts/LanguageContext";
 import {
   Sidebar,
   SidebarContent,
@@ -34,29 +35,6 @@ import {
   SidebarFooter,
   useSidebar,
 } from "@/components/ui/sidebar";
-
-const mainItems = [
-  { title: "Leads", url: "/leads", icon: UserPlus },
-  { title: "Deals", url: "/deals", icon: Handshake },
-  { title: "Attendance", url: "/attendance", icon: Clock },
-  { title: "My Tasks", url: "/my-tasks", icon: ListTodo },
-];
-
-// Admin items - includes Employee Directory and Team Management
-const fullAdminItems = [
-  { title: "Employee Directory", url: "/admin/employees", icon: Users },
-  { title: "All Users", url: "/admin/users", icon: Users2 },
-  { title: "Task Assignment", url: "/admin/tasks", icon: ClipboardList },
-  { title: "Team Roles", url: "/admin/roles", icon: UserCog },
-  { title: "Team Attendance", url: "/admin/attendance", icon: Clock },
-  { title: "Team Task Report", url: "/team-tasks", icon: BarChart2 },
-  { title: "Send Notifications", url: "/admin/notifications", icon: MegaphoneIcon },
-];
-
-const settingsItems = [
-  { title: "My Profile", url: "/profile", icon: UserCircle },
-  { title: "Settings", url: "/settings", icon: Settings },
-];
 
 function SidebarNavGroup({
   label,
@@ -104,6 +82,29 @@ export function CrmSidebar() {
   
   const { data: isOwnerOrAdmin } = useIsOwnerOrAdmin();
   const showAdmin = !!isOwnerOrAdmin;
+  const { t } = useLanguage();
+
+  const mainItems = [
+    { title: t("nav.leads", "Leads"), url: "/leads", icon: UserPlus },
+    { title: t("nav.deals", "Deals"), url: "/deals", icon: Handshake },
+    { title: t("nav.attendance", "Attendance"), url: "/attendance", icon: Clock },
+    { title: t("nav.tasks", "My Tasks"), url: "/my-tasks", icon: ListTodo },
+  ];
+
+  const fullAdminItems = [
+    { title: t("nav.employees", "Employee Directory"), url: "/admin/employees", icon: Users },
+    { title: t("nav.users", "All Users"), url: "/admin/users", icon: Users2 },
+    { title: t("nav.task_assign", "Task Assignment"), url: "/admin/tasks", icon: ClipboardList },
+    { title: t("nav.roles", "Team Roles"), url: "/admin/roles", icon: UserCog },
+    { title: t("nav.team_attendance", "Team Attendance"), url: "/admin/attendance", icon: Clock },
+    { title: t("nav.team_report", "Team Task Report"), url: "/team-tasks", icon: BarChart2 },
+    { title: t("nav.notifications", "Send Notifications"), url: "/admin/notifications", icon: MegaphoneIcon },
+  ];
+
+  const settingsItems = [
+    { title: t("nav.profile", "My Profile"), url: "/profile", icon: UserCircle },
+    { title: t("nav.settings", "Settings"), url: "/settings", icon: Settings },
+  ];
 
   return (
     <Sidebar collapsible="icon">
@@ -114,9 +115,9 @@ export function CrmSidebar() {
           </div>
           {!collapsed && (
             <div className="flex flex-col">
-              <span className="text-sm font-bold text-sidebar-accent-foreground">Sultan CRM</span>
+              <span className="text-sm font-bold text-sidebar-accent-foreground">Sultan Wellness Pvt Ltd</span>
               <span className="text-xs text-sidebar-foreground/60">
-                {isOwnerOrAdmin ? "Admin Control" : "Telecaller Portal"}
+                {isOwnerOrAdmin ? t("role.admin", "Admin Control") : t("role.caller", "Telecaller Portal")}
               </span>
             </div>
           )}

@@ -1,6 +1,8 @@
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { CrmSidebar } from "@/components/CrmSidebar";
 import { NotificationsBell } from "@/components/NotificationsBell";
+import { LanguageSwitch } from "@/components/LanguageSwitch";
+import { useLanguage } from "@/contexts/LanguageContext";
 import { Search, LogOut } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -14,6 +16,7 @@ interface CrmLayoutProps { children: React.ReactNode; }
 
 export function CrmLayout({ children }: CrmLayoutProps) {
   const { user, signOut } = useAuth();
+  const { t } = useLanguage();
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [name, setName] = useState<string>("");
 
@@ -44,10 +47,11 @@ export function CrmLayout({ children }: CrmLayoutProps) {
               <SidebarTrigger />
               <div className="relative hidden sm:block">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input placeholder="Search CRM..." className="pl-9 w-64 h-9 bg-muted/50 border-0" />
+                <Input placeholder={t("header.search", "Search CRM...")} className="pl-9 w-64 h-9 bg-muted/50 border-0" />
               </div>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2.5">
+              <LanguageSwitch />
               <NotificationsBell />
               <Link to="/profile" title="My Profile">
                 <Avatar className="h-8 w-8 cursor-pointer">
