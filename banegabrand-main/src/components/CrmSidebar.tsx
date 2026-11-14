@@ -36,25 +36,21 @@ import {
 } from "@/components/ui/sidebar";
 
 const mainItems = [
-  { title: "Dashboard", url: "/", icon: LayoutDashboard },
-  { title: "Lead Dashboard", url: "/leads/dashboard", icon: Phone },
   { title: "Leads", url: "/leads", icon: UserPlus },
   { title: "Deals", url: "/deals", icon: Handshake },
   { title: "Attendance", url: "/attendance", icon: Clock },
   { title: "My Tasks", url: "/my-tasks", icon: ListTodo },
-  { title: "Projects", url: "/projects", icon: Briefcase },
 ];
 
-// Admin items - includes Team Roles
+// Admin items - includes Employee Directory and Team Management
 const fullAdminItems = [
-  { title: "Admin Dashboard", url: "/admin", icon: Shield },
-  { title: "All Users", url: "/admin/users", icon: Users },
+  { title: "Employee Directory", url: "/admin/employees", icon: Users },
+  { title: "All Users", url: "/admin/users", icon: Users2 },
   { title: "Task Assignment", url: "/admin/tasks", icon: ClipboardList },
-  { title: "Team Roles", url: "/admin/roles", icon: UserCog }, // This is here
-  { title: "Team Attendance", url: "/admin/attendance", icon: Users2 },
+  { title: "Team Roles", url: "/admin/roles", icon: UserCog },
+  { title: "Team Attendance", url: "/admin/attendance", icon: Clock },
   { title: "Team Task Report", url: "/team-tasks", icon: BarChart2 },
   { title: "Send Notifications", url: "/admin/notifications", icon: MegaphoneIcon },
-  { title: "Employee Directory", url: "/admin/employees", icon: Users },
 ];
 
 const settingsItems = [

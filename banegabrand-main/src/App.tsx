@@ -50,13 +50,13 @@ function ProtectedRoutes() {
   return (
     <CrmLayout>
       <Routes>
-        <Route path="/" element={<Dashboard />} />
+        <Route path="/" element={<Navigate to="/leads" replace />} />
         <Route path="/leads" element={<Leads />} />
         
-        <Route path="/leads/dashboard" element={<LeadDashboard />} />
+        <Route path="/leads/dashboard" element={<Navigate to="/leads" replace />} />
         <Route path="/deals" element={<Deals />} />
         
-        <Route path="/projects" element={<Projects />} />
+        <Route path="/projects" element={<Navigate to="/leads" replace />} />
         
         <Route path="/profile" element={<Profile />} />
         
@@ -65,7 +65,7 @@ function ProtectedRoutes() {
         <Route path="/team-tasks" element={<RoleGuard allowed={[...managerRoles]}><TeamTaskReport /></RoleGuard>} />
         
         <Route path="/settings" element={<Settings />} />
-        <Route path="/admin" element={<RoleGuard allowed={[...fullAccessRoles]}><AdminDashboard /></RoleGuard>} />
+        <Route path="/admin" element={<Navigate to="/admin/employees" replace />} />
         <Route path="/admin/tasks" element={<RoleGuard allowed={[...managerRoles]}><TaskAssignment /></RoleGuard>} />
         <Route path="/admin/users" element={<RoleGuard allowed={[...fullAccessRoles]}><AllUsers /></RoleGuard>} />
         <Route path="/admin/roles" element={<RoleGuard allowed={[...fullAccessRoles]}><TeamRoles /></RoleGuard>} />

@@ -126,36 +126,60 @@ export default function AllUsers() {
 
     setCreateLoading(true);
     try {
-      // Use an isolated Supabase client without persisting sessions so admin remains logged in!
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+      let createdUserId: string | null = null;
 
-      const secondaryClient = createClient(supabaseUrl, supabaseKey, {
-        auth: { persistSession: false, autoRefreshToken: false }
-      });
+      // 1. Try DB RPC function first (creates with confirmed email automatically)
+      try {
+        const { data: rpcData, error: rpcErr } = await supabase.rpc("admin_create_employee", {
+          _email: createForm.email.trim().toLowerCase(),
+          _password: createForm.password,
+          _full_name: createForm.name.trim(),
+          _phone: createForm.phone?.trim() || "",
+          _role: createForm.role,
+          _department: createForm.department || "Telecalling",
+        });
 
-      const { data: signUpData, error: signUpErr } = await secondaryClient.auth.signUp({
-        email: createForm.email.trim(),
-        password: createForm.password,
-        options: {
-          data: {
-            full_name: createForm.name.trim(),
-            role: createForm.role,
-            phone: createForm.phone,
-            department: createForm.department,
-          }
+        if (!rpcErr && rpcData?.user_id) {
+          createdUserId = rpcData.user_id;
         }
-      });
+      } catch (rpcCatch) {
+        console.warn("RPC admin_create_employee not available, falling back to signUp:", rpcCatch);
+      }
 
-      if (signUpErr) throw signUpErr;
+      // 2. Fallback: Secondary Supabase client without session persistence
+      if (!createdUserId) {
+        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "https://gzvkbrkracajwizmnzgx.supabase.co";
+        const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || "sb_publishable_bHCzjy6RP516IKSLgSYAbw_vfrITeUY";
 
-      const newUserId = signUpData.user?.id;
-      if (newUserId) {
+        const secondaryClient = createClient(supabaseUrl, supabaseKey, {
+          auth: { persistSession: false, autoRefreshToken: false }
+        });
+
+        const { data: signUpData, error: signUpErr } = await secondaryClient.auth.signUp({
+          email: createForm.email.trim(),
+          password: createForm.password,
+          options: {
+            data: {
+              full_name: createForm.name.trim(),
+              role: createForm.role,
+              phone: createForm.phone,
+              department: createForm.department,
+            }
+          }
+        });
+
+        if (signUpErr) throw signUpErr;
+        createdUserId = signUpData.user?.id || null;
+      }
+
+      if (createdUserId) {
         // Ensure profile is correctly set
         await supabase.from("profiles").upsert({
-          user_id: newUserId,
+          id: createdUserId,
+          user_id: createdUserId,
           display_name: createForm.name.trim(),
-          email: createForm.email.trim(),
+          full_name: createForm.name.trim(),
+          email: createForm.email.trim().toLowerCase(),
           phone: createForm.phone || null,
           department: createForm.department || "Telecalling",
           job_title: createForm.job_title || "Telecaller",
@@ -164,7 +188,7 @@ export default function AllUsers() {
 
         // Ensure role is correctly set
         await supabase.from("user_roles").upsert({
-          user_id: newUserId,
+          user_id: createdUserId,
           role: createForm.role,
         });
 

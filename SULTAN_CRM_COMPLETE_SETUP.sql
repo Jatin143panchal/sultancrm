@@ -390,6 +390,100 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.set_user_primary_role(UUID, TEXT) TO authenticated;
 
+-- ── 13B. ADMIN CREATE EMPLOYEE RPC ────────────────────────────────
+CREATE OR REPLACE FUNCTION public.admin_create_employee(
+  _email TEXT,
+  _password TEXT,
+  _full_name TEXT,
+  _phone TEXT DEFAULT '',
+  _role TEXT DEFAULT 'employee',
+  _department TEXT DEFAULT 'Telecalling'
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+DECLARE
+  v_new_id UUID := gen_random_uuid();
+  v_encrypted_pw TEXT;
+BEGIN
+  -- Only admin or owner can create employee accounts
+  IF NOT public.is_admin_or_owner(auth.uid()) THEN
+    RAISE EXCEPTION 'Not authorized. Only Admin or Owner can create employee accounts.';
+  END IF;
+
+  -- Check if user already exists
+  IF EXISTS (SELECT 1 FROM auth.users WHERE lower(email) = lower(trim(_email))) THEN
+    RAISE EXCEPTION 'User with this email already exists.';
+  END IF;
+
+  v_encrypted_pw := crypt(_password, gen_salt('bf'));
+
+  -- Insert into auth.users with pre-confirmed email (zero email verification gate)
+  INSERT INTO auth.users (
+    instance_id,
+    id,
+    aud,
+    role,
+    email,
+    encrypted_password,
+    email_confirmed_at,
+    raw_app_meta_data,
+    raw_user_meta_data,
+    created_at,
+    updated_at,
+    confirmation_token,
+    recovery_token
+  ) VALUES (
+    '00000000-0000-0000-0000-000000000000',
+    v_new_id,
+    'authenticated',
+    'authenticated',
+    lower(trim(_email)),
+    v_encrypted_pw,
+    now(),
+    '{"provider":"email","providers":["email"]}'::jsonb,
+    jsonb_build_object(
+      'full_name', _full_name,
+      'phone', _phone,
+      'department', _department,
+      'role', _role
+    ),
+    now(),
+    now(),
+    '',
+    ''
+  );
+
+  -- Upsert profile
+  INSERT INTO public.profiles (id, user_id, display_name, full_name, email, phone, department, employee_status)
+  VALUES (v_new_id, v_new_id, _full_name, _full_name, lower(trim(_email)), _phone, _department, 'active')
+  ON CONFLICT (id) DO UPDATE SET
+    display_name = EXCLUDED.display_name,
+    full_name = EXCLUDED.full_name,
+    email = EXCLUDED.email,
+    phone = EXCLUDED.phone,
+    department = EXCLUDED.department,
+    employee_status = 'active';
+
+  -- Set role
+  INSERT INTO public.user_roles (user_id, role)
+  VALUES (v_new_id, _role)
+  ON CONFLICT (user_id, role) DO UPDATE SET role = EXCLUDED.role;
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'user_id', v_new_id,
+    'email', lower(trim(_email)),
+    'full_name', _full_name,
+    'role', _role
+  );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.admin_create_employee(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT) TO authenticated;
+
 -- ── 14. ROW LEVEL SECURITY (RLS) POLICIES ─────────────────────────
 
 -- PROFILES POLICIES

@@ -3746,18 +3746,20 @@ export default function Leads() {
                 {showOnlyMine ? "Showing: My Leads" : "Show My Leads Only"}
               </Button>
             )}
-            <div className="flex items-center gap-1.5">
-              <Select value={exportStage} onValueChange={setExportStage}>
-                <SelectTrigger className="w-36 h-9"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Stages</SelectItem>
-                  {STAGES.map(s => <SelectItem key={s.value} value={s.value}>{s.icon} {s.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              <Button variant="outline" size="sm" onClick={() => handleExportByStage(exportStage)}>
-                <Download className="mr-2 h-4 w-4" />Export
-              </Button>
-            </div>
+            {isAdmin && (
+              <div className="flex items-center gap-1.5">
+                <Select value={exportStage} onValueChange={setExportStage}>
+                  <SelectTrigger className="w-36 h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Stages</SelectItem>
+                    {STAGES.map(s => <SelectItem key={s.value} value={s.value}>{s.icon} {s.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Button variant="outline" size="sm" onClick={() => handleExportByStage(exportStage)}>
+                  <Download className="mr-2 h-4 w-4" />Export
+                </Button>
+              </div>
+            )}
 
             {/* Import Dialog (Admin Only) */}
             {isAdmin && (
