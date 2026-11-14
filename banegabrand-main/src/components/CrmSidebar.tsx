@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
-import { useHasRole } from "@/hooks/useAdmin";
+import { useIsOwnerOrAdmin } from "@/hooks/useAdmin";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   Sidebar,
@@ -106,10 +106,8 @@ export function CrmSidebar() {
   const currentPath = location.pathname;
   const isActive = (path: string) => currentPath === path || currentPath.startsWith(path + "/");
   
-  const { data: isOwner } = useHasRole("owner");
-  const { user } = useAuth();
-  const isOwnerByEmail = user?.email ? ["sultanwellness.owner@gmail.com", "banegabrand.owner@gmail.com"].includes(user.email.toLowerCase()) : false;
-  const showAdmin = isOwner || isOwnerByEmail;
+  const { data: isOwnerOrAdmin } = useIsOwnerOrAdmin();
+  const showAdmin = !!isOwnerOrAdmin;
 
   return (
     <Sidebar collapsible="icon">
@@ -120,9 +118,10 @@ export function CrmSidebar() {
           </div>
           {!collapsed && (
             <div className="flex flex-col">
-              <span className="text-sm font-bold text-sidebar-accent-foreground">Sultan Wellness Private Limited</span>
-
-              <span className="text-xs text-sidebar-foreground/60">Sales CRM</span>
+              <span className="text-sm font-bold text-sidebar-accent-foreground">Sultan CRM</span>
+              <span className="text-xs text-sidebar-foreground/60">
+                {isOwnerOrAdmin ? "Admin Control" : "Telecaller Portal"}
+              </span>
             </div>
           )}
         </div>

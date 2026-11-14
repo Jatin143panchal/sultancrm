@@ -30,9 +30,9 @@ import TeamAttendance from "./pages/TeamAttendance";
 
 const queryClient = new QueryClient();
 
-const fullAccessRoles = ["owner"] as const;
-const managerRoles = ["owner"] as const;
-const hrRoles = ["owner"] as const;
+const fullAccessRoles = ["owner", "admin"] as const;
+const managerRoles = ["owner", "admin", "tl"] as const;
+const hrRoles = ["owner", "admin", "hr_manager"] as const;
 
 function ProtectedRoutes() {
   const { user, loading } = useAuth();

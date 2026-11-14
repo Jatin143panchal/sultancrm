@@ -30,6 +30,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Switch } from "@/components/ui/switch";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -41,7 +42,8 @@ import {
   ShoppingCart, Package, FileText, Printer, Star, Bell, BarChart,
   DollarSign, CalendarDays, ClipboardList, Users2, Briefcase,
   MessagesSquare, Smartphone, Tablet, Monitor, Settings, Shield,
-  Database, Cloud, Server, HardDrive, Cpu
+  Database, Cloud, Server, HardDrive, Cpu,
+  Play, Pause, Volume2, HelpCircle, ExternalLink, Copy, Check, Headset, Radio, RefreshCw
 } from "lucide-react";
 import { isToday, subDays, format, differenceInDays } from "date-fns";
 import { toast } from "sonner";
@@ -1429,7 +1431,7 @@ function MyAttendanceCard({ userId }: { userId: string }) {
 }
 
 // ── EMPLOYEE CARD ──────────────────────────────────────────────────────
-function EmployeeCard({ agent, onStatusChange }: { agent: Agent; onStatusChange: (id: string, Agent["status"]) => void }) {
+function EmployeeCard({ agent, onStatusChange }: { agent: Agent; onStatusChange: (id: string, status: Agent["status"]) => void }) {
   const statusColor = {
     online: "text-green-600 bg-green-50 border-green-200",
     break: "text-orange-600 bg-orange-50 border-orange-200",
@@ -1643,188 +1645,676 @@ function TeamAttendanceTable({ agents, attendance }: { agents: Agent[]; attendan
   );
 }
 
-// ── AUTO CALL QUEUE ─────────────────────────────────────────────────────
-function AutoCallQueue({ leads, currentUserId, onUpdateCallStatus, onLogCall }: {
+// ── AUDIO BEEP & PC TELEPHONY TRIGGER ──────────────────────────────────
+function playAudioTone(freq = 880, duration = 0.12, type: OscillatorType = "sine") {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, ctx.currentTime);
+    gain.gain.setValueAtTime(0.08, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + duration);
+  } catch {
+    // Audio context may require user interaction
+  }
+}
+
+function playDialChime() {
+  playAudioTone(587.33, 0.08, "sine");
+  setTimeout(() => playAudioTone(880, 0.12, "sine"), 100);
+}
+
+function triggerPCTelephony(phone: string) {
+  if (!phone) return;
+  const clean = phone.replace(/[^0-9+]/g, "");
+  let frame = document.getElementById("crm-tel-trigger") as HTMLIFrameElement;
+  if (!frame) {
+    frame = document.createElement("iframe");
+    frame.id = "crm-tel-trigger";
+    frame.style.display = "none";
+    document.body.appendChild(frame);
+  }
+  frame.src = `tel:${clean}`;
+}
+
+// ── AUTO CALL QUEUE & HANDS-FREE AUTO-DIALER ────────────────────────────
+function AutoCallQueue({
+  leads,
+  currentUserId,
+  isAdmin,
+  onUpdateCallStatus,
+  onLogCall,
+  onSaveRemark,
+}: {
   leads: Lead[];
   currentUserId: string;
+  isAdmin?: boolean;
   onUpdateCallStatus: (id: string, status: string) => void;
   onLogCall: (id: string) => void;
+  onSaveRemark?: (id: string, remark: string) => Promise<void>;
 }) {
-  const queue = useMemo(
-    () =>
-      leads
-        .filter(
-          l =>
-            l.assigned_to === currentUserId &&
-            l.stage !== "Converted" &&
-            l.stage !== "Lost" &&
-            (l.call_status === "pending" || l.call_status === "followup" || l.call_status === "callback_requested")
-        )
-        .sort((a, b) => {
-          if (a.next_call_date && b.next_call_date) {
-            return new Date(a.next_call_date).getTime() - new Date(b.next_call_date).getTime();
-          }
-          if (a.next_call_date) return -1;
-          if (b.next_call_date) return 1;
-          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-        }),
-    [leads, currentUserId]
-  );
-
+  const [filterScope, setFilterScope] = useState<"all_pending" | "my_pending" | "followups" | "hot_leads">("all_pending");
+  const [isAutoDial, setIsAutoDial] = useState<boolean>(false);
+  const [autoDelay, setAutoDelay] = useState<number>(5);
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const [isPaused, setIsPaused] = useState<boolean>(false);
+  const [callActive, setCallActive] = useState<boolean>(false);
+  const [callDuration, setCallDuration] = useState<number>(0);
+  const [noteText, setNoteText] = useState<string>("");
+  const [copied, setCopied] = useState<boolean>(false);
+  const [showGuide, setShowGuide] = useState<boolean>(false);
   const [index, setIndex] = useState(0);
-  const [cooldown, setCooldown] = useState(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const queue = useMemo(() => {
+    return leads
+      .filter(l => {
+        if (l.stage === "Converted" || l.stage === "Lost") return false;
+        if (!isAdmin && l.assigned_to !== currentUserId) return false;
+
+        if (filterScope === "my_pending") {
+          const isMine = l.assigned_to === currentUserId;
+          const isPendingCall =
+            !l.call_status ||
+            l.call_status === "pending" ||
+            l.call_status === "followup" ||
+            l.call_status === "callback_requested";
+          return isMine && isPendingCall;
+        }
+
+        if (filterScope === "followups") {
+          return l.call_status === "followup" || l.call_status === "callback_requested" || !!l.next_call_date;
+        }
+
+        if (filterScope === "hot_leads") {
+          return (l.temperature === "Hot" || l.stage === "Interested") && l.call_status !== "order_confirmed";
+        }
+
+        // "all_pending" (default): All active pending leads
+        return (
+          !l.call_status ||
+          l.call_status === "pending" ||
+          l.call_status === "followup" ||
+          l.call_status === "callback_requested" ||
+          l.call_status === "ringing"
+        );
+      })
+      .sort((a, b) => {
+        if (a.next_call_date && b.next_call_date) {
+          return new Date(a.next_call_date).getTime() - new Date(b.next_call_date).getTime();
+        }
+        if (a.next_call_date) return -1;
+        if (b.next_call_date) return 1;
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      });
+  }, [leads, currentUserId, filterScope, isAdmin]);
 
   const current = queue[index] || null;
 
+  // Reset index if queue changes and index exceeds
   useEffect(() => {
-    if (index >= queue.length) setIndex(0);
+    if (index >= queue.length && queue.length > 0) {
+      setIndex(0);
+    }
   }, [queue.length, index]);
 
+  // Sync quick note with lead's existing remark
   useEffect(() => {
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, []);
+    setNoteText(current?.remark || "");
+  }, [current?.id]);
 
-  const startCooldown = useCallback(() => {
-    setCooldown(CALL_COOLDOWN_SECONDS);
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => {
-      setCooldown(prev => {
-        if (prev <= 1) {
-          if (timerRef.current) clearInterval(timerRef.current);
-          return 0;
-        }
-        return prev - 1;
-      });
+  // Dial function
+  const dialLead = useCallback(
+    (lead: Lead) => {
+      if (!lead || !lead.phone) {
+        toast.error("Lead has no valid phone number");
+        return;
+      }
+      playDialChime();
+      triggerPCTelephony(lead.phone);
+      onLogCall(lead.id);
+      if (!lead.call_status || lead.call_status === "pending") {
+        onUpdateCallStatus(lead.id, "ringing");
+      }
+      setCallActive(true);
+      setCallDuration(0);
+      toast.info(`📞 Calling ${lead.name} (${lead.phone})...`);
+    },
+    [onLogCall, onUpdateCallStatus]
+  );
+
+  // In-call duration timer
+  useEffect(() => {
+    if (!callActive) return;
+    const interval = setInterval(() => {
+      setCallDuration(prev => prev + 1);
     }, 1000);
-  }, []);
+    return () => clearInterval(interval);
+  }, [callActive]);
 
-  const handleCall = useCallback(() => {
-    if (!current) return;
-    onLogCall(current.id);
-    if (current.call_status === "pending") onUpdateCallStatus(current.id, "ringing");
-    startCooldown();
-  }, [current, onLogCall, onUpdateCallStatus, startCooldown]);
+  // Countdown timer for Auto-Dialing
+  useEffect(() => {
+    if (countdown === null || isPaused || !isAutoDial) return;
 
-  const goNext = useCallback(() => {
-    setCooldown(0);
-    if (timerRef.current) clearInterval(timerRef.current);
-    setIndex(prev => (prev + 1 < queue.length ? prev + 1 : 0));
-  }, [queue.length]);
+    if (countdown <= 0) {
+      setCountdown(null);
+      if (current) {
+        dialLead(current);
+      }
+      return;
+    }
 
-  const handleOutcome = useCallback((status: string) => {
-    if (!current) return;
-    onUpdateCallStatus(current.id, status);
-    goNext();
-  }, [current, onUpdateCallStatus, goNext]);
+    if (countdown === 1) {
+      playAudioTone(784, 0.08, "sine"); // Warning chime 1 sec prior
+    }
 
-  if (queue.length === 0) {
-    return (
-      <Card className="border-dashed">
-        <CardContent className="p-6 text-center text-sm text-muted-foreground">
-          <PhoneCall className="h-5 w-5 mx-auto mb-2 opacity-50" />
-          No pending calls in your queue right now. 🎉
-        </CardContent>
-      </Card>
-    );
-  }
+    const t = setTimeout(() => {
+      setCountdown(prev => (prev !== null ? prev - 1 : null));
+    }, 1000);
+
+    return () => clearTimeout(t);
+  }, [countdown, isPaused, isAutoDial, current, dialLead]);
+
+  const handleNext = useCallback(() => {
+    setCountdown(null);
+    setCallActive(false);
+    const nextIdx = index + 1 < queue.length ? index + 1 : 0;
+    setIndex(nextIdx);
+    if (isAutoDial && !isPaused && queue.length > 1) {
+      setCountdown(autoDelay);
+    }
+  }, [index, queue.length, isAutoDial, isPaused, autoDelay]);
+
+  const handleOutcome = useCallback(
+    async (status: string) => {
+      if (!current) return;
+      onUpdateCallStatus(current.id, status);
+
+      if (noteText.trim() && onSaveRemark) {
+        await onSaveRemark(current.id, noteText.trim());
+      }
+
+      setCallActive(false);
+      const nextIdx = index + 1 < queue.length ? index + 1 : 0;
+      setIndex(nextIdx);
+
+      if (isAutoDial && !isPaused && queue.length > 1) {
+        setCountdown(autoDelay);
+      } else {
+        setCountdown(null);
+      }
+    },
+    [current, onUpdateCallStatus, noteText, onSaveRemark, index, queue.length, isAutoDial, isPaused, autoDelay]
+  );
+
+  const formatDuration = (sec: number) => {
+    const mins = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${mins.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+  };
+
+  const copyToClipboard = (text: string) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    toast.success("Phone number copied!");
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   const wa = current ? buildWhatsAppLink(current) : null;
-  const canCall = cooldown === 0;
   const daysUntil = current ? getDaysUntilNextCall(current.next_call_date) : null;
 
   return (
-    <Card className="border-primary/20">
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center justify-between text-base">
-          <span className="flex items-center gap-2">
-            <PhoneCall className="h-5 w-5 text-primary" />
-            Auto Call Queue
-          </span>
-          <Badge variant="outline">{index + 1} / {queue.length}</Badge>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {current && (
-          <>
-            <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-full flex items-center justify-center text-white font-bold" style={{ background: avatarColor(current.name) }}>
-                {getInitials(current.name)}
+    <>
+      <Card className="border-2 border-primary/30 shadow-md bg-gradient-to-br from-background via-background to-primary/5">
+        <CardHeader className="pb-3 border-b bg-muted/20">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <div className="p-2 rounded-xl bg-primary text-primary-foreground shadow-sm">
+                <PhoneCall className="h-5 w-5" />
               </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold">{current.name}</p>
-                <p className="text-xs text-muted-foreground font-mono">{hidePhoneNumber(current.phone)}</p>
-                {daysUntil !== null && daysUntil > 0 && (
-                  <p className="text-xs text-orange-600">📅 Follow-up in {daysUntil} days</p>
-                )}
-                {daysUntil !== null && daysUntil <= 0 && (
-                  <p className="text-xs text-red-600">🔔 Follow-up due today!</p>
-                )}
+              <div>
+                <CardTitle className="text-base flex items-center gap-2 font-bold">
+                  ⚡ Auto-Dialer & Telephony Queue
+                  {isAutoDial && (
+                    <Badge variant="outline" className="bg-green-500/10 text-green-600 border-green-500/30 animate-pulse">
+                      ● Auto-Dialing Active
+                    </Badge>
+                  )}
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  Hands-free PC calling with 1-click outcomes and automatic queuing
+                </CardDescription>
               </div>
-              <StagePill stage={current.stage} subStage={current.sub_stage} />
             </div>
 
-            {!canCall && (
-              <div className="rounded-lg bg-muted/40 p-3 text-center">
-                <p className="text-xs text-muted-foreground mb-1">Next call unlocks in</p>
-                <p className="text-2xl font-bold text-primary flex items-center justify-center gap-1">
-                  <Timer className="h-5 w-5" /> {cooldown}s
-                </p>
+            <div className="flex items-center flex-wrap gap-2">
+              {/* Queue Filter Scope */}
+              <Select value={filterScope} onValueChange={(val: any) => { setFilterScope(val); setIndex(0); setCountdown(null); }}>
+                <SelectTrigger className="h-8 text-xs w-[140px] bg-background">
+                  <SelectValue placeholder="Queue Filter" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all_pending">All Pending ({leads.length})</SelectItem>
+                  <SelectItem value="my_pending">My Leads</SelectItem>
+                  <SelectItem value="followups">Follow-ups</SelectItem>
+                  <SelectItem value="hot_leads">Hot / Warm Leads</SelectItem>
+                </SelectContent>
+              </Select>
+
+              {/* Free PC Setup Guide Button */}
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs gap-1 border-blue-200 text-blue-600 hover:bg-blue-50"
+                onClick={() => setShowGuide(true)}
+              >
+                <Headset className="h-3.5 w-3.5" />
+                Free PC Setup Guide
+              </Button>
+
+              <Badge variant="secondary" className="font-mono text-xs px-2.5 py-1">
+                {queue.length > 0 ? `${index + 1} of ${queue.length}` : "0 Leads"}
+              </Badge>
+            </div>
+          </div>
+
+          {/* Auto-Dial Control Bar */}
+          <div className="mt-3 pt-3 border-t flex flex-wrap items-center justify-between gap-3 bg-background/50 p-2.5 rounded-lg border">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="auto-dial-mode"
+                  checked={isAutoDial}
+                  onCheckedChange={checked => {
+                    setIsAutoDial(checked);
+                    if (!checked) {
+                      setCountdown(null);
+                      toast.info("Auto-Dialer mode turned OFF");
+                    } else {
+                      toast.success(`⚡ Auto-Dialer ON (${autoDelay}s delay)`);
+                      if (!callActive && current) {
+                        setCountdown(autoDelay);
+                      }
+                    }
+                  }}
+                />
+                <Label htmlFor="auto-dial-mode" className="text-xs font-semibold cursor-pointer select-none">
+                  ⚡ Hands-Free Auto Mode
+                </Label>
+              </div>
+
+              {isAutoDial && (
+                <div className="flex items-center gap-1.5 pl-3 border-l text-xs text-muted-foreground">
+                  <span>Delay:</span>
+                  {[3, 5, 8, 10].map(sec => (
+                    <button
+                      key={sec}
+                      type="button"
+                      onClick={() => setAutoDelay(sec)}
+                      className={`px-2 py-0.5 rounded text-xs transition-colors ${
+                        autoDelay === sec
+                          ? "bg-primary text-primary-foreground font-semibold"
+                          : "bg-muted hover:bg-muted/80 text-muted-foreground"
+                      }`}
+                    >
+                      {sec}s
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {isAutoDial && (
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant={isPaused ? "default" : "outline"}
+                  className="h-7 text-xs gap-1"
+                  onClick={() => {
+                    setIsPaused(!isPaused);
+                    toast.info(isPaused ? "▶ Auto-dial resumed" : "⏸ Auto-dial paused");
+                  }}
+                >
+                  {isPaused ? <Play className="h-3 w-3" /> : <Pause className="h-3 w-3" />}
+                  {isPaused ? "Resume Auto-Dial" : "Pause"}
+                </Button>
               </div>
             )}
+          </div>
+        </CardHeader>
 
-            <div className="flex flex-wrap gap-2">
-              <Button className="flex-1 min-w-[140px]" disabled={!canCall} asChild={canCall}>
-                {canCall ? (
-                  <a href={current.phone ? `tel:${current.phone}` : "#"} onClick={handleCall}>
-                    <Phone className="mr-2 h-4 w-4" /> Call Now
-                  </a>
-                ) : (
-                  <span><Phone className="mr-2 h-4 w-4" /> Call Now</span>
-                )}
-              </Button>
-              {wa && (
-                <Button variant="outline" className="text-green-600 border-green-200" asChild>
-                  <a href={wa} target="_blank" rel="noopener noreferrer">
-                    <MessageCircle className="mr-2 h-4 w-4" /> WhatsApp
-                  </a>
-                </Button>
+        <CardContent className="p-4 sm:p-6 space-y-4">
+          {queue.length === 0 ? (
+            <div className="text-center py-8">
+              <CheckCircle2 className="h-10 w-10 text-green-500 mx-auto mb-2 opacity-80" />
+              <p className="font-semibold text-base">No pending calls in this queue! 🎉</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Select another filter above (e.g. "All Pending") to continue calling.
+              </p>
+            </div>
+          ) : current ? (
+            <>
+              {/* Countdown Banner */}
+              {countdown !== null && !isPaused && (
+                <div className="rounded-xl border border-primary/30 bg-primary/10 p-3 flex items-center justify-between animate-in fade-in slide-in-from-top-1">
+                  <div className="flex items-center gap-2.5">
+                    <span className="relative flex h-3 w-3">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-3 w-3 bg-primary"></span>
+                    </span>
+                    <div>
+                      <p className="text-xs font-medium text-foreground">
+                        Auto-calling <span className="font-bold">{current.name}</span> in{" "}
+                        <span className="text-sm font-bold text-primary">{countdown}s</span>...
+                      </p>
+                      <Progress value={((autoDelay - countdown) / autoDelay) * 100} className="h-1.5 w-44 mt-1" />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setCountdown(null)}>
+                      Cancel
+                    </Button>
+                    <Button size="sm" className="h-7 text-xs gap-1" onClick={() => dialLead(current)}>
+                      <Phone className="h-3 w-3" /> Dial Now
+                    </Button>
+                  </div>
+                </div>
               )}
-              <Button variant="outline" onClick={goNext} title="Skip this lead">
-                <ChevronRight className="mr-2 h-4 w-4" /> Skip
-              </Button>
+
+              {/* Live In-Call Banner */}
+              {callActive && (
+                <div className="rounded-xl border border-green-500/40 bg-green-500/10 p-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="relative flex h-3 w-3">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                    </span>
+                    <p className="text-xs font-semibold text-green-700 dark:text-green-400">
+                      Live Call In Progress: <span className="font-mono text-sm">{formatDuration(callDuration)}</span>
+                    </p>
+                  </div>
+                  <Badge variant="outline" className="bg-green-500/20 text-green-700 border-green-300">
+                    Active on Softphone / PC
+                  </Badge>
+                </div>
+              )}
+
+              {/* Lead Details Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-card border shadow-sm">
+                <div className="flex items-center gap-3">
+                  <div
+                    className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-base shadow-sm shrink-0"
+                    style={{ background: avatarColor(current.name) }}
+                  >
+                    {getInitials(current.name)}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="font-bold text-lg leading-tight">{current.name}</h4>
+                      <StagePill stage={current.stage} subStage={current.sub_stage} />
+                      {current.temperature && (
+                        <Badge
+                          variant="outline"
+                          className={
+                            current.temperature === "Hot"
+                              ? "bg-red-50 text-red-600 border-red-200"
+                              : current.temperature === "Warm"
+                              ? "bg-amber-50 text-amber-600 border-amber-200"
+                              : "bg-blue-50 text-blue-600 border-blue-200"
+                          }
+                        >
+                          {current.temperature}
+                        </Badge>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
+                      <span className="font-mono font-medium text-foreground">{current.phone || "No Phone"}</span>
+                      {current.phone && (
+                        <button
+                          type="button"
+                          onClick={() => copyToClipboard(current.phone)}
+                          className="hover:text-primary transition-colors"
+                          title="Copy Phone"
+                        >
+                          {copied ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />}
+                        </button>
+                      )}
+                      <span>•</span>
+                      <span>{current.city || current.state ? `${current.city || ""}, ${current.state || ""}` : "Location N/A"}</span>
+                    </div>
+
+                    {daysUntil !== null && (
+                      <p className={`text-xs mt-1 font-medium ${daysUntil <= 0 ? "text-red-600" : "text-amber-600"}`}>
+                        {daysUntil <= 0 ? "🔔 Follow-up scheduled for TODAY!" : `📅 Follow-up in ${daysUntil} days`}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Medicine / Product / Value Pills */}
+                <div className="flex sm:flex-col items-start sm:items-end gap-1.5 shrink-0">
+                  {current.medicine && (
+                    <Badge variant="secondary" className="text-xs">
+                      💊 {current.medicine}
+                    </Badge>
+                  )}
+                  {current.disease && (
+                    <Badge variant="outline" className="text-xs">
+                      🩺 {current.disease}
+                    </Badge>
+                  )}
+                  {current.value && (
+                    <span className="text-xs font-semibold text-emerald-600">
+                      ₹{current.value}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Action Buttons: Call Now, WhatsApp, Skip */}
+              <div className="flex flex-wrap gap-2.5">
+                <Button
+                  className="flex-1 min-w-[160px] h-10 font-semibold gap-2 shadow-sm"
+                  onClick={() => dialLead(current)}
+                >
+                  <Phone className="h-4 w-4" />
+                  {callActive ? "Re-Dial via PC" : "📞 Call Now (System)"}
+                </Button>
+
+                {wa && (
+                  <Button
+                    variant="outline"
+                    className="h-10 text-green-600 border-green-300 hover:bg-green-50 font-semibold gap-1.5"
+                    asChild
+                  >
+                    <a href={wa} target="_blank" rel="noopener noreferrer">
+                      <MessageCircle className="h-4 w-4" /> WhatsApp
+                    </a>
+                  </Button>
+                )}
+
+                <Button variant="outline" className="h-10 gap-1" onClick={handleNext} title="Skip to next lead">
+                  <ChevronRight className="h-4 w-4" /> Skip Next
+                </Button>
+              </div>
+
+              {/* In-Call Quick Note Input */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span className="font-medium">Call Notes & Remarks (Auto-saved with outcome):</span>
+                  {current.remark && <span className="text-[11px] text-muted-foreground truncate max-w-[200px]">Prev: {current.remark}</span>}
+                </div>
+                <Input
+                  placeholder="e.g. Customer interested in 30 days pack, requested callback at 4 PM..."
+                  value={noteText}
+                  onChange={e => setNoteText(e.target.value)}
+                  className="h-9 text-xs"
+                />
+              </div>
+
+              {/* 1-Click Call Outcome Buttons */}
+              <div className="space-y-1.5 pt-1">
+                <p className="text-xs font-semibold text-muted-foreground">
+                  Select Call Outcome {isAutoDial && "→ Auto-advances to next call"}:
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-green-600 border-green-200 hover:bg-green-50 font-medium text-xs h-8"
+                    onClick={() => handleOutcome("connected")}
+                  >
+                    <PhoneIncoming className="mr-1 h-3 w-3" /> Connected
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-purple-600 border-purple-200 hover:bg-purple-50 font-medium text-xs h-8"
+                    onClick={() => handleOutcome("interested")}
+                  >
+                    ⭐ Interested
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-emerald-600 border-emerald-200 hover:bg-emerald-50 font-medium text-xs h-8"
+                    onClick={() => handleOutcome("order_confirmed")}
+                  >
+                    🛒 Confirmed
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-red-600 border-red-200 hover:bg-red-50 font-medium text-xs h-8"
+                    onClick={() => handleOutcome("not_connected")}
+                  >
+                    <PhoneMissed className="mr-1 h-3 w-3" /> Busy / No Ans
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-orange-600 border-orange-200 hover:bg-orange-50 font-medium text-xs h-8"
+                    onClick={() => handleOutcome("not_interested")}
+                  >
+                    👎 Not Interested
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-blue-600 border-blue-200 hover:bg-blue-50 font-medium text-xs h-8"
+                    onClick={() => handleOutcome("callback_requested")}
+                  >
+                    🔄 Callback
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-amber-600 border-amber-200 hover:bg-amber-50 font-medium text-xs h-8"
+                    onClick={() => handleOutcome("followup")}
+                  >
+                    📅 Follow-up
+                  </Button>
+                </div>
+              </div>
+            </>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      {/* Free PC Setup Guide Modal */}
+      <Dialog open={showGuide} onOpenChange={setShowGuide}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-lg font-bold">
+              <Headset className="h-5 w-5 text-primary" />
+              Free PC Calling Setup Guide (System se ₹0 Calling)
+            </DialogTitle>
+            <DialogDescription>
+              Is CRM me system se 100% free calling setup karne ke 2 aasan open-source aur built-in tareeqe:
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* Option 1: Microsoft Phone Link */}
+            <div className="border rounded-xl p-4 bg-muted/20 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-sm flex items-center gap-2 text-blue-600">
+                  <Smartphone className="h-4 w-4" /> Option 1: Windows Phone Link (Sabse Best & 100% Free)
+                </span>
+                <Badge variant="secondary" className="bg-green-50 text-green-700 border-green-200">
+                  Zero Cost • Unlimited Calls
+                </Badge>
+              </div>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Aapke mobile me maujood Jio / Airtel unlimited calling plan direct PC ke headphone se chalega.
+              </p>
+              <ol className="text-xs space-y-1.5 list-decimal pl-4 text-foreground/80">
+                <li>
+                  Windows PC me <strong>"Phone Link"</strong> app open karein aur Android phone me <strong>"Link to Windows"</strong> app on karein.
+                </li>
+                <li>Bluetooth aur Wi-Fi ke zariye phone ko PC se pair kar lijiye.</li>
+                <li>PC me apna <strong>Headphone / Mic</strong> connect karein.</li>
+                <li>
+                  Ab CRM me <strong>"Auto-Dialer"</strong> on karenge toh call mobile SIM se lagegi aur baat PC ke headphone se hogi!
+                </li>
+              </ol>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1">
-              <Button size="sm" variant="outline" className="text-green-600 border-green-200" onClick={() => handleOutcome("connected")}>
-                <PhoneIncoming className="mr-1 h-3 w-3" /> Connected
-              </Button>
-              <Button size="sm" variant="outline" className="text-red-600 border-red-200" onClick={() => handleOutcome("not_connected")}>
-                <PhoneMissed className="mr-1 h-3 w-3" /> Not Connected
-              </Button>
-              <Button size="sm" variant="outline" className="text-purple-600 border-purple-200" onClick={() => handleOutcome("interested")}>
-                ⭐ Interested
-              </Button>
-              <Button size="sm" variant="outline" className="text-red-600 border-red-200" onClick={() => handleOutcome("not_interested")}>
-                👎 Not Interested
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => handleOutcome("callback_requested")}>
-                🔄 Callback
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => handleOutcome("followup")}>
-                📅 Follow-up
-              </Button>
-              <Button size="sm" variant="outline" className="text-emerald-600 border-emerald-200" onClick={() => handleOutcome("order_confirmed")}>
-                🛒 Order Confirmed
-              </Button>
+            {/* Option 2: MicroSIP Open Source */}
+            <div className="border rounded-xl p-4 bg-muted/20 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-sm flex items-center gap-2 text-purple-600">
+                  <Monitor className="h-4 w-4" /> Option 2: MicroSIP (100% Free & Open-Source Softphone)
+                </span>
+                <Badge variant="outline" className="border-purple-300 text-purple-700">
+                  GPL Open Source
+                </Badge>
+              </div>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Windows ka lightweight open-source dialer jo browser ke har call link ko handle karta hai.
+              </p>
+              <ol className="text-xs space-y-1.5 list-decimal pl-4 text-foreground/80">
+                <li>
+                  <a
+                    href="https://www.microsip.org"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-primary underline font-medium inline-flex items-center gap-1"
+                  >
+                    microsip.org <ExternalLink className="h-3 w-3" />
+                  </a>{" "}
+                  se MicroSIP download karke install karein.
+                </li>
+                <li>
+                  Windows Settings → <strong>Default Apps</strong> → "Choose defaults by protocol" me jaakar{" "}
+                  <code>tel:</code> ko <strong>MicroSIP</strong> par set karein.
+                </li>
+                <li>MicroSIP me apna free SIP/VoIP account ya GSM Gateway connect karein.</li>
+                <li>CRM se click karte hi direct MicroSIP call connect karega.</li>
+              </ol>
             </div>
-            <p className="text-[11px] text-muted-foreground text-center">
-              Marking an outcome auto-advances to the next lead. "Call Now" locks for {CALL_COOLDOWN_SECONDS}s.
-            </p>
-          </>
-        )}
-      </CardContent>
-    </Card>
+
+            <div className="p-3 bg-primary/5 rounded-lg border border-primary/20 text-xs text-muted-foreground">
+              💡 <strong>Pro Tip:</strong> "⚡ Hands-Free Auto Mode" switch on karne ke baad telecaller ko sirf call pe baat karke outcome button dabana hai — agla number bina click kiye apne aap dial hota rahega!
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button onClick={() => setShowGuide(false)} className="w-full sm:w-auto">
+              Got it! Start Calling
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -2363,13 +2853,17 @@ export default function Leads() {
     supabase.auth.getUser().then(async ({ data }) => {
       setCurrentUser(data.user);
       if (!data.user) return;
-      const { data: agentRow } = await supabase
-        .from("agents")
+      
+      const { data: rolesData } = await supabase
+        .from("user_roles")
         .select("role")
-        .eq("id", data.user.id)
-        .maybeSingle();
-      setIsAdmin(agentRow?.role === "admin");
-      setIsTeamLeader(agentRow?.role === "team_leader" || agentRow?.role === "admin");
+        .eq("user_id", data.user.id);
+        
+      const userRoles = (rolesData || []).map(r => r.role);
+      const isAdm = userRoles.includes("admin") || userRoles.includes("owner");
+      const isTl = isAdm || userRoles.includes("tl");
+      setIsAdmin(isAdm);
+      setIsTeamLeader(isTl);
     });
   }, []);
 
@@ -2380,7 +2874,7 @@ export default function Leads() {
       const [
         { data: leadsData, error: leadsErr },
         { data: agentsData, error: agentsErr },
-        { data: attendanceData, error: attendanceErr }
+        { data: attendanceData }
       ] = await Promise.all([
         supabase.from("leads").select("*").order("created_at", { ascending: false }),
         supabase.from("agents").select("*").order("name"),
@@ -2388,12 +2882,37 @@ export default function Leads() {
       ]);
 
       if (leadsErr) throw leadsErr;
-      if (agentsErr) throw agentsErr;
-      if (attendanceErr) throw attendanceErr;
-
       setLeads((leadsData as Lead[]) || []);
-      setAgents((agentsData as Agent[]) || []);
-      setAttendance((attendanceData as Attendance[]) || []);
+
+      if (agentsData && !agentsErr) {
+        setAgents((agentsData as Agent[]) || []);
+      } else {
+        // Fallback to profiles table if agents view is not yet created
+        const { data: profs } = await supabase.from("profiles").select("*");
+        if (profs && profs.length > 0) {
+          const mappedAgents: Agent[] = profs.map(p => ({
+            id: p.user_id,
+            agent_code: "AGT-" + (p.user_id ? p.user_id.slice(0, 4).toUpperCase() : "0000"),
+            name: p.display_name || p.email || "Agent",
+            email: p.email || "",
+            phone: p.phone || "",
+            department: p.department || "Telecalling",
+            role: "caller",
+            status: "online",
+            login_time: null,
+            break_time: null,
+            logout_time: null,
+            total_working_hours: 0,
+            total_breaks: 0,
+            created_at: p.created_at,
+          }));
+          setAgents(mappedAgents);
+        }
+      }
+
+      if (attendanceData) {
+        setAttendance((attendanceData as Attendance[]) || []);
+      }
     } catch (err: any) {
       console.error(err);
       toast.error(err.message || "Failed to fetch data");
@@ -2440,9 +2959,14 @@ export default function Leads() {
 
   const logActivity = useCallback(async (leadId: string, action: string, detail?: string) => {
     try {
-      await supabase.from("lead_activity").insert({ lead_id: leadId, action, detail });
+      await supabase.from("lead_activity_log").insert({
+        lead_id: leadId,
+        user_id: currentUser?.id || null,
+        action,
+        details: detail || "",
+      });
     } catch { /* non-critical */ }
-  }, []);
+  }, [currentUser?.id]);
 
   const logCallAttempt = useCallback(async (leadId: string) => {
     const now = new Date().toISOString();
@@ -3043,14 +3567,20 @@ export default function Leads() {
       {currentUser && <MyAttendanceCard userId={currentUser.id} />}
 
       {/* AUTO CALL QUEUE */}
-      {currentUser && (
-        <AutoCallQueue
-          leads={leads}
-          currentUserId={currentUser.id}
-          onUpdateCallStatus={handleUpdateCallStatus}
-          onLogCall={logCallAttempt}
-        />
-      )}
+      <AutoCallQueue
+        leads={leads}
+        currentUserId={currentUser?.id || "unassigned"}
+        isAdmin={isAdmin}
+        onUpdateCallStatus={handleUpdateCallStatus}
+        onLogCall={logCallAttempt}
+        onSaveRemark={async (id: string, remark: string) => {
+          try {
+            await supabase.from("leads").update({ remark }).eq("id", id);
+            setLeads(prev => prev.map(l => (l.id === id ? { ...l, remark } : l)));
+            logActivity(id, "note_added", remark);
+          } catch { /* non-critical */ }
+        }}
+      />
 
       {/* REPORTS */}
       {isAdmin && <Reports leads={leads} agents={agents} />}
@@ -3229,20 +3759,21 @@ export default function Leads() {
               </Button>
             </div>
 
-            {/* Import Dialog */}
-            <Dialog open={uploadOpen} onOpenChange={o => {
-              setUploadOpen(o);
-              if (!o) { setUploadPreview([]);
-                setImportSummary(null);
-                setImportAssignTo("unassigned");
-                if (fileRef.current) fileRef.current.value = ""; }
-            }}>
-              <DialogTrigger asChild>
-                <Button variant="outline" size="sm">
-                  <Upload className="mr-2 h-4 w-4" />Import
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+            {/* Import Dialog (Admin Only) */}
+            {isAdmin && (
+              <Dialog open={uploadOpen} onOpenChange={o => {
+                setUploadOpen(o);
+                if (!o) { setUploadPreview([]);
+                  setImportSummary(null);
+                  setImportAssignTo("unassigned");
+                  if (fileRef.current) fileRef.current.value = ""; }
+              }}>
+                <DialogTrigger asChild>
+                  <Button variant="outline" size="sm">
+                    <Upload className="mr-2 h-4 w-4" />Import
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle className="flex items-center gap-2">
                     <FileSpreadsheet className="h-5 w-5" />
@@ -3315,8 +3846,10 @@ export default function Leads() {
                 </DialogFooter>
               </DialogContent>
             </Dialog>
+            )}
 
-            {/* Add Lead Dialog */}
+            {/* Add Lead Dialog (Admin Only) */}
+            {isAdmin && (
             <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
               <DialogTrigger asChild>
                 <Button size="sm">
@@ -3432,6 +3965,7 @@ export default function Leads() {
                 </div>
               </DialogContent>
             </Dialog>
+            )}
           </div>
         </div>
 

@@ -4,83 +4,142 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Building2 } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
+import { Building2, Lock, Mail, Eye, EyeOff, ShieldCheck, PhoneCall } from "lucide-react";
+import { toast } from "sonner";
 
 export default function Auth() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [fullName, setFullName] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const { toast } = useToast();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!email || !password) {
+      toast.error("Please enter both email and password");
+      return;
+    }
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) toast({ title: "Login failed", description: error.message, variant: "destructive" });
-    setLoading(false);
-  };
-
-  const handleSignup = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    const { error } = await supabase.auth.signUp({
-      email, password,
-      options: { data: { full_name: fullName }, emailRedirectTo: window.location.origin },
+    const { data, error } = await supabase.auth.signInWithPassword({ 
+      email: email.trim(), 
+      password 
     });
-    if (error) toast({ title: "Signup failed", description: error.message, variant: "destructive" });
-    else toast({ title: "Account created", description: "You can now sign in." });
+
+    if (error) {
+      toast.error(error.message || "Invalid email or password");
+    } else if (data?.user) {
+      toast.success("Welcome back! Signing in...");
+    }
     setLoading(false);
   };
 
   const handleForgot = async () => {
-    if (!email) { toast({ title: "Enter your email first", variant: "destructive" }); return; }
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    if (!email) {
+      toast.error("Please enter your registered email address first");
+      return;
+    }
+    setLoading(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
       redirectTo: `${window.location.origin}/reset-password`,
     });
-    if (error) toast({ title: "Error", description: error.message, variant: "destructive" });
-    else toast({ title: "Check your email", description: "We sent a reset link." });
+    if (error) {
+      toast.error(error.message);
+    } else {
+      toast.success("Password reset instructions sent to your email!");
+    }
+    setLoading(false);
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/5 via-background to-accent/10 p-4">
-      <Card className="w-full max-w-md shadow-2xl">
-        <CardHeader className="text-center">
-          <div className="flex justify-center mb-4">
-            <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-primary">
-              <Building2 className="h-7 w-7 text-primary-foreground" />
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 p-4">
+      {/* Background glowing decorations */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-40 -right-40 w-96 h-96 bg-primary/20 rounded-full blur-3xl"></div>
+        <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl"></div>
+      </div>
+
+      <Card className="w-full max-w-md shadow-2xl border-slate-700/60 bg-slate-900/90 backdrop-blur-xl text-slate-100 relative z-10">
+        <CardHeader className="text-center space-y-2 pb-6">
+          <div className="flex justify-center mb-2">
+            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-tr from-primary to-indigo-500 shadow-lg shadow-primary/30">
+              <PhoneCall className="h-8 w-8 text-white" />
             </div>
           </div>
-<CardTitle className="text-2xl">Sultan Wellness CRM</CardTitle>
-          <CardDescription>Sign in to your account</CardDescription>
+          <CardTitle className="text-2xl font-bold tracking-tight text-white flex items-center justify-center gap-2">
+            Sultan CRM
+          </CardTitle>
+          <CardDescription className="text-slate-400 text-sm">
+            Professional Telecalling & Lead Management Portal
+          </CardDescription>
         </CardHeader>
-        <CardContent>
-          <Tabs defaultValue="login">
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="login">Login</TabsTrigger>
-              <TabsTrigger value="signup">Sign Up</TabsTrigger>
-            </TabsList>
-            <TabsContent value="login">
-              <form onSubmit={handleLogin} className="space-y-4 mt-4">
-                <div className="grid gap-2"><Label>Email</Label><Input type="email" value={email} onChange={e => setEmail(e.target.value)} required /></div>
-                <div className="grid gap-2"><Label>Password</Label><Input type="password" value={password} onChange={e => setPassword(e.target.value)} required /></div>
-                <Button type="submit" className="w-full" disabled={loading}>{loading ? "Signing in..." : "Sign In"}</Button>
-                <button type="button" onClick={handleForgot} className="text-xs text-muted-foreground hover:text-primary block w-full text-center">
+
+        <CardContent className="space-y-5">
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div className="space-y-2">
+              <Label className="text-xs font-medium text-slate-300">Email Address</Label>
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <Input
+                  type="email"
+                  placeholder="employee@sultancrm.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="pl-9 bg-slate-800/80 border-slate-700 text-white placeholder:text-slate-500 focus:border-primary focus:ring-primary"
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-medium text-slate-300">Password</Label>
+                <button
+                  type="button"
+                  onClick={handleForgot}
+                  className="text-xs text-primary hover:text-primary/80 transition-colors"
+                >
                   Forgot password?
                 </button>
-              </form>
-            </TabsContent>
-            <TabsContent value="signup">
-              <form onSubmit={handleSignup} className="space-y-4 mt-4">
-                <div className="grid gap-2"><Label>Full Name</Label><Input value={fullName} onChange={e => setFullName(e.target.value)} required /></div>
-                <div className="grid gap-2"><Label>Email</Label><Input type="email" value={email} onChange={e => setEmail(e.target.value)} required /></div>
-                <div className="grid gap-2"><Label>Password</Label><Input type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={6} /></div>
-                <Button type="submit" className="w-full" disabled={loading}>{loading ? "Creating account..." : "Create Account"}</Button>
-              </form>
-            </TabsContent>
-          </Tabs>
+              </div>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <Input
+                  type={showPassword ? "text" : "password"}
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="pl-9 pr-10 bg-slate-800/80 border-slate-700 text-white placeholder:text-slate-500 focus:border-primary focus:ring-primary"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+
+            <Button
+              type="submit"
+              className="w-full bg-primary hover:bg-primary/90 text-white font-medium h-10 mt-2 shadow-md shadow-primary/20"
+              disabled={loading}
+            >
+              {loading ? "Verifying..." : "Sign In to CRM"}
+            </Button>
+          </form>
+
+          {/* Role access notice */}
+          <div className="pt-3 border-t border-slate-800 text-center">
+            <div className="flex items-center justify-center gap-1.5 text-xs text-slate-400 mb-1">
+              <ShieldCheck className="h-4 w-4 text-emerald-400" />
+              <span>Admin Controlled CRM Access</span>
+            </div>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              Public registration is disabled. Employee accounts and lead allocations are created and managed exclusively by the System Administrator.
+            </p>
+          </div>
         </CardContent>
       </Card>
     </div>

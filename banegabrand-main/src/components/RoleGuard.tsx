@@ -10,16 +10,13 @@ interface RoleGuardProps {
   fallback?: string;
 }
 
-// Owner emails that always get admin access even if DB roles are wrong
-const OWNER_EMAILS = ["sultanwellness.owner@gmail.com", "banegabrand.owner@gmail.com"];
-
 export function RoleGuard({ allowed, children, fallback = "/" }: RoleGuardProps) {
-  const { data: roles, isLoading } = useUserRoles();
+  const { data: roles = [], isLoading } = useUserRoles();
   const { data: hasAccess } = useHasRole(...allowed);
   const { user } = useAuth();
 
-  const isOwnerByEmail = user?.email ? OWNER_EMAILS.includes(user.email.toLowerCase()) : false;
-  const isAllowed = hasAccess || isOwnerByEmail;
+  const isOwnerOrAdmin = roles.includes("owner") || roles.includes("admin");
+  const isAllowed = hasAccess || isOwnerOrAdmin;
 
   if (isLoading) {
     return (
