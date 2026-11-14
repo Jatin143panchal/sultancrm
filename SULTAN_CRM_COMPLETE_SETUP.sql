@@ -1,26 +1,41 @@
 -- ═══════════════════════════════════════════════════════════════════
--- SULTAN CRM — COMPLETE DATABASE SETUP MIGRATION
--- Run this in Supabase Dashboard → SQL Editor (https://supabase.com/dashboard/project/gzvkbrkracajwizmnzgx/sql/new)
+-- SULTAN CRM — 100% COMPATIBLE MASTER DATABASE SETUP
+-- Safe to run on existing Supabase project (gzvkbrkracajwizmnzgx)
+-- Run in: https://supabase.com/dashboard/project/gzvkbrkracajwizmnzgx/sql/new
 -- ═══════════════════════════════════════════════════════════════════
 
--- Enable UUID extension
+-- Enable extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- ── 1. ROLES ENUM & TYPES ─────────────────────────────────────────
+-- ── 1. EXTEND APP_ROLE ENUM SAFELY ─────────────────────────────────
 DO $$ BEGIN
-  CREATE TYPE public.app_role AS ENUM ('owner', 'admin', 'hr_manager', 'tl', 'employee', 'user');
-EXCEPTION
-  WHEN duplicate_object THEN null;
+  CREATE TYPE public.app_role AS ENUM ('owner', 'admin', 'employee', 'tl', 'hr_manager', 'user');
+EXCEPTION WHEN duplicate_object THEN null;
 END $$;
+
+DO $$ BEGIN
+  ALTER TYPE public.app_role ADD VALUE IF NOT EXISTS 'employee';
+EXCEPTION WHEN others THEN null; END $$;
+
+DO $$ BEGIN
+  ALTER TYPE public.app_role ADD VALUE IF NOT EXISTS 'hr_manager';
+EXCEPTION WHEN others THEN null; END $$;
+
+DO $$ BEGIN
+  ALTER TYPE public.app_role ADD VALUE IF NOT EXISTS 'tl';
+EXCEPTION WHEN others THEN null; END $$;
+
+DO $$ BEGIN
+  ALTER TYPE public.app_role ADD VALUE IF NOT EXISTS 'user';
+EXCEPTION WHEN others THEN null; END $$;
 
 DO $$ BEGIN
   CREATE TYPE public.lead_status AS ENUM ('new', 'contacted', 'qualified', 'lost', 'answered', 'not_answered', 'converted');
-EXCEPTION
-  WHEN duplicate_object THEN null;
+EXCEPTION WHEN duplicate_object THEN null;
 END $$;
 
--- ── 2. HELPER FUNCTIONS ───────────────────────────────────────────
+-- ── 2. HELPER FUNCTION ─────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -29,10 +44,11 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- ── 3. PROFILES TABLE ─────────────────────────────────────────────
+-- ── 3. PROFILES TABLE (CREATE OR EXTEND) ───────────────────────────
 CREATE TABLE IF NOT EXISTS public.profiles (
-  id UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id UUID NOT NULL UNIQUE REFERENCES auth.users(id) ON DELETE CASCADE,
+  id UUID NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  full_name TEXT,
   display_name TEXT,
   email TEXT,
   phone TEXT,
@@ -44,6 +60,20 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Ensure all required columns exist on profiles
+ALTER TABLE public.profiles 
+  ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  ADD COLUMN IF NOT EXISTS display_name TEXT,
+  ADD COLUMN IF NOT EXISTS department TEXT DEFAULT 'Telecalling',
+  ADD COLUMN IF NOT EXISTS job_title TEXT DEFAULT 'Telecaller',
+  ADD COLUMN IF NOT EXISTS employee_status TEXT NOT NULL DEFAULT 'active',
+  ADD COLUMN IF NOT EXISTS avatar_url TEXT,
+  ADD COLUMN IF NOT EXISTS admin_notes TEXT;
+
+-- Sync user_id = id if user_id was null
+UPDATE public.profiles SET user_id = id WHERE user_id IS NULL;
+UPDATE public.profiles SET display_name = full_name WHERE display_name IS NULL AND full_name IS NOT NULL;
 
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
@@ -58,7 +88,7 @@ CREATE TABLE IF NOT EXISTS public.user_roles (
 
 ALTER TABLE public.user_roles ENABLE ROW LEVEL SECURITY;
 
--- ── 5. ROLE CHECK FUNCTIONS (SECURITY DEFINER) ────────────────────
+-- ── 5. ROLE CHECK FUNCTIONS ───────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.has_role(_user_id UUID, _role public.app_role)
 RETURNS BOOLEAN
 LANGUAGE sql
@@ -82,19 +112,6 @@ AS $$
   SELECT EXISTS (
     SELECT 1 FROM public.user_roles
     WHERE user_id = _user_id AND (role = 'admin'::public.app_role OR role = 'owner'::public.app_role)
-  );
-$$;
-
-CREATE OR REPLACE FUNCTION public.is_manager_or_admin(_user_id UUID)
-RETURNS BOOLEAN
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
-SET search_path = public
-AS $$
-  SELECT EXISTS (
-    SELECT 1 FROM public.user_roles
-    WHERE user_id = _user_id AND (role = 'admin'::public.app_role OR role = 'owner'::public.app_role OR role = 'tl'::public.app_role)
   );
 $$;
 
@@ -141,8 +158,8 @@ CREATE TABLE IF NOT EXISTS public.leads (
 
 ALTER TABLE public.leads ENABLE ROW LEVEL SECURITY;
 
-DROP TRIGGER IF EXISTS update_leads_updated_at ON public.leads;
-CREATE TRIGGER update_leads_updated_at
+DROP TRIGGER IF EXISTS trg_leads_updated_at ON public.leads;
+CREATE TRIGGER trg_leads_updated_at
   BEFORE UPDATE ON public.leads
   FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
@@ -187,20 +204,12 @@ CREATE TABLE IF NOT EXISTS public.attendance (
 
 ALTER TABLE public.attendance ENABLE ROW LEVEL SECURITY;
 
--- ── 10. NOTIFICATIONS TABLE ───────────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.notifications (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  title TEXT NOT NULL,
-  message TEXT,
-  type TEXT NOT NULL DEFAULT 'info',
-  read BOOLEAN NOT NULL DEFAULT false,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+-- ── 10. NOTIFICATIONS (EXTEND EXISTING) ───────────────────────────
+ALTER TABLE public.notifications 
+  ADD COLUMN IF NOT EXISTS message TEXT,
+  ADD COLUMN IF NOT EXISTS read BOOLEAN DEFAULT false;
 
-ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
-
--- ── 11. ACTIVITIES TABLE ──────────────────────────────────────────
+-- ── 11. ACTIVITIES & DEALS ────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.activities (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -215,10 +224,8 @@ CREATE TABLE IF NOT EXISTS public.activities (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
 ALTER TABLE public.activities ENABLE ROW LEVEL SECURITY;
 
--- ── 12. DEALS TABLE ───────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.deals (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -232,67 +239,13 @@ CREATE TABLE IF NOT EXISTS public.deals (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
 ALTER TABLE public.deals ENABLE ROW LEVEL SECURITY;
 
--- ── 13. CONTACTS TABLE ────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.contacts (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
-  email TEXT,
-  phone TEXT,
-  company TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-ALTER TABLE public.contacts ENABLE ROW LEVEL SECURITY;
-
--- ── 14. COMPLAINTS & REPORTS TABLES ───────────────────────────────
-CREATE TABLE IF NOT EXISTS public.complaints (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  title TEXT NOT NULL,
-  description TEXT,
-  status TEXT NOT NULL DEFAULT 'open',
-  priority TEXT NOT NULL DEFAULT 'medium',
-  category TEXT DEFAULT 'general',
-  assigned_to UUID REFERENCES auth.users(id) ON DELETE SET NULL,
-  contact_name TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-ALTER TABLE public.complaints ENABLE ROW LEVEL SECURITY;
-
-CREATE TABLE IF NOT EXISTS public.daily_reports (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  report_date DATE NOT NULL DEFAULT CURRENT_DATE,
-  tasks_completed TEXT,
-  challenges TEXT,
-  plan_tomorrow TEXT,
-  status TEXT DEFAULT 'submitted',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-ALTER TABLE public.daily_reports ENABLE ROW LEVEL SECURITY;
-
-CREATE TABLE IF NOT EXISTS public.weekly_reports (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  week_start_date DATE NOT NULL,
-  summary TEXT,
-  achievements TEXT,
-  next_week_goals TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-ALTER TABLE public.weekly_reports ENABLE ROW LEVEL SECURITY;
-
--- ── 15. COMPATIBILITY VIEWS ───────────────────────────────────────
+-- ── 12. COMPATIBILITY VIEWS ───────────────────────────────────────
 CREATE OR REPLACE VIEW public.agents AS
 SELECT 
   p.user_id AS id,
-  COALESCE(p.display_name, split_part(p.email, '@', 1), 'Agent') AS name,
+  COALESCE(p.display_name, p.full_name, split_part(p.email, '@', 1), 'Agent') AS name,
   COALESCE(p.email, '') AS email,
   COALESCE(p.phone, '') AS phone,
   COALESCE(p.department, 'Telecalling') AS department,
@@ -345,7 +298,41 @@ CREATE TRIGGER trg_lead_activity_insert
 INSTEAD OF INSERT ON public.lead_activity
 FOR EACH ROW EXECUTE FUNCTION public.handle_insert_lead_activity();
 
--- ── 16. AUTH TRIGGERS ─────────────────────────────────────────────
+-- ── 13. AUTO-SYNC EXISTING USERS & MAKE ADMIN ─────────────────────
+INSERT INTO public.profiles (id, user_id, display_name, full_name, email, department, job_title, employee_status)
+SELECT 
+  u.id, 
+  u.id, 
+  COALESCE(u.raw_user_meta_data->>'full_name', split_part(u.email, '@', 1)),
+  COALESCE(u.raw_user_meta_data->>'full_name', split_part(u.email, '@', 1)),
+  u.email,
+  'Management',
+  'Administrator',
+  'active'
+FROM auth.users u
+ON CONFLICT (id) DO UPDATE SET
+  user_id = EXCLUDED.user_id,
+  display_name = COALESCE(public.profiles.display_name, EXCLUDED.display_name),
+  email = EXCLUDED.email;
+
+-- Assign Admin & Owner roles to admin/jatin users
+INSERT INTO public.user_roles (user_id, role)
+SELECT u.id, 'admin'::public.app_role
+FROM auth.users u
+WHERE lower(u.email) LIKE '%admin%' 
+   OR lower(u.email) LIKE '%jatin%'
+   OR lower(u.email) LIKE '%owner%'
+ON CONFLICT (user_id, role) DO NOTHING;
+
+INSERT INTO public.user_roles (user_id, role)
+SELECT u.id, 'owner'::public.app_role
+FROM auth.users u
+WHERE lower(u.email) LIKE '%admin%' 
+   OR lower(u.email) LIKE '%jatin%'
+   OR lower(u.email) LIKE '%owner%'
+ON CONFLICT (user_id, role) DO NOTHING;
+
+-- ── 14. AUTH TRIGGERS FOR FUTURE SIGNUPS ──────────────────────────
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -353,16 +340,19 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  INSERT INTO public.profiles (user_id, display_name, email, phone, department, employee_status)
+  INSERT INTO public.profiles (id, user_id, display_name, full_name, email, phone, department, employee_status)
   VALUES (
     NEW.id,
+    NEW.id,
+    COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1)),
     COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1)),
     NEW.email,
     NEW.raw_user_meta_data->>'phone',
     COALESCE(NEW.raw_user_meta_data->>'department', 'Telecalling'),
     'active'
   )
-  ON CONFLICT (user_id) DO UPDATE SET
+  ON CONFLICT (id) DO UPDATE SET
+    user_id = EXCLUDED.user_id,
     display_name = EXCLUDED.display_name,
     email = EXCLUDED.email,
     updated_at = now();
@@ -383,17 +373,13 @@ SET search_path = public
 AS $$
 DECLARE
   v_role public.app_role;
-  v_count INTEGER;
   v_meta_role TEXT;
 BEGIN
-  SELECT count(*) INTO v_count FROM public.user_roles;
   v_meta_role := lower(COALESCE(NEW.raw_user_meta_data->>'role', ''));
 
-  IF v_count = 0 THEN
-    v_role := 'admin'::public.app_role;
-  ELSIF v_meta_role IN ('admin', 'owner', 'tl', 'hr_manager', 'employee') THEN
+  IF v_meta_role IN ('admin', 'owner', 'tl', 'hr_manager', 'employee') THEN
     v_role := v_meta_role::public.app_role;
-  ELSIF lower(NEW.email) LIKE '%admin%' OR lower(NEW.email) LIKE '%owner%' THEN
+  ELSIF lower(NEW.email) LIKE '%admin%' OR lower(NEW.email) LIKE '%jatin%' THEN
     v_role := 'admin'::public.app_role;
   ELSE
     v_role := 'employee'::public.app_role;
@@ -402,12 +388,6 @@ BEGIN
   INSERT INTO public.user_roles (user_id, role)
   VALUES (NEW.id, v_role)
   ON CONFLICT (user_id, role) DO NOTHING;
-
-  IF v_count = 0 THEN
-    INSERT INTO public.user_roles (user_id, role)
-    VALUES (NEW.id, 'owner'::public.app_role)
-    ON CONFLICT (user_id, role) DO NOTHING;
-  END IF;
 
   RETURN NEW;
 END;
@@ -437,69 +417,60 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.set_user_primary_role(UUID, public.app_role) TO authenticated;
 
--- ── 17. ROW LEVEL SECURITY (RLS) POLICIES ─────────────────────────
+-- ── 15. ROW LEVEL SECURITY (RLS) POLICIES ─────────────────────────
 
 -- PROFILES POLICIES
 DROP POLICY IF EXISTS "Anyone authenticated can view profiles" ON public.profiles;
 CREATE POLICY "Anyone authenticated can view profiles"
-ON public.profiles FOR SELECT
-TO authenticated
-USING (true);
+ON public.profiles FOR SELECT TO authenticated USING (true);
 
 DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
 CREATE POLICY "Users can update own profile"
-ON public.profiles FOR UPDATE
-TO authenticated
-USING (auth.uid() = user_id OR public.is_admin_or_owner(auth.uid()))
-WITH CHECK (auth.uid() = user_id OR public.is_admin_or_owner(auth.uid()));
+ON public.profiles FOR UPDATE TO authenticated
+USING (auth.uid() = user_id OR auth.uid() = id OR public.is_admin_or_owner(auth.uid()))
+WITH CHECK (auth.uid() = user_id OR auth.uid() = id OR public.is_admin_or_owner(auth.uid()));
 
 DROP POLICY IF EXISTS "Admins can insert profiles" ON public.profiles;
 CREATE POLICY "Admins can insert profiles"
-ON public.profiles FOR INSERT
-TO authenticated
-WITH CHECK (auth.uid() = user_id OR public.is_admin_or_owner(auth.uid()));
+ON public.profiles FOR INSERT TO authenticated
+WITH CHECK (auth.uid() = user_id OR auth.uid() = id OR public.is_admin_or_owner(auth.uid()));
 
 -- USER ROLES POLICIES
 DROP POLICY IF EXISTS "Users can view own roles" ON public.user_roles;
 CREATE POLICY "Users can view own roles"
-ON public.user_roles FOR SELECT
-TO authenticated
+ON public.user_roles FOR SELECT TO authenticated
 USING (auth.uid() = user_id OR public.is_admin_or_owner(auth.uid()));
 
 DROP POLICY IF EXISTS "Admins can manage user roles" ON public.user_roles;
 CREATE POLICY "Admins can manage user roles"
-ON public.user_roles FOR ALL
-TO authenticated
+ON public.user_roles FOR ALL TO authenticated
 USING (public.is_admin_or_owner(auth.uid()))
 WITH CHECK (public.is_admin_or_owner(auth.uid()));
 
 -- LEADS POLICIES:
--- 1. SELECT: Admins/Owners see all leads; Employees see ONLY their assigned leads
+-- 1. SELECT: Admin sees all; Employee sees ONLY their assigned leads
 DROP POLICY IF EXISTS "Leads select policy" ON public.leads;
 CREATE POLICY "Leads select policy"
-ON public.leads FOR SELECT
-TO authenticated
+ON public.leads FOR SELECT TO authenticated
 USING (
   public.is_admin_or_owner(auth.uid()) 
   OR public.has_role(auth.uid(), 'tl'::public.app_role)
   OR assigned_to = auth.uid()
 );
 
--- 2. INSERT: Only Admin / Owner can insert leads! Employees cannot add leads!
+-- 2. INSERT: Only Admin / Owner / TL can insert leads! Employees cannot add leads!
 DROP POLICY IF EXISTS "Leads insert policy" ON public.leads;
 CREATE POLICY "Leads insert policy"
-ON public.leads FOR INSERT
-TO authenticated
+ON public.leads FOR INSERT TO authenticated
 WITH CHECK (
   public.is_admin_or_owner(auth.uid())
   OR public.has_role(auth.uid(), 'tl'::public.app_role)
 );
 
--- 3. UPDATE: Admins can update any lead; Employees can update their assigned leads
+-- 3. UPDATE: Admins can update any; Employees can update ONLY their assigned leads
 DROP POLICY IF EXISTS "Leads update policy" ON public.leads;
 CREATE POLICY "Leads update policy"
-ON public.leads FOR UPDATE
-TO authenticated
+ON public.leads FOR UPDATE TO authenticated
 USING (
   public.is_admin_or_owner(auth.uid())
   OR public.has_role(auth.uid(), 'tl'::public.app_role)
@@ -514,75 +485,44 @@ WITH CHECK (
 -- 4. DELETE: Only Admin / Owner can delete leads!
 DROP POLICY IF EXISTS "Leads delete policy" ON public.leads;
 CREATE POLICY "Leads delete policy"
-ON public.leads FOR DELETE
-TO authenticated
+ON public.leads FOR DELETE TO authenticated
 USING (public.is_admin_or_owner(auth.uid()));
 
 -- LEAD ACTIVITY LOG POLICIES
 DROP POLICY IF EXISTS "Activity log select policy" ON public.lead_activity_log;
 CREATE POLICY "Activity log select policy"
-ON public.lead_activity_log FOR SELECT
-TO authenticated
-USING (true);
+ON public.lead_activity_log FOR SELECT TO authenticated USING (true);
 
 DROP POLICY IF EXISTS "Activity log insert policy" ON public.lead_activity_log;
 CREATE POLICY "Activity log insert policy"
-ON public.lead_activity_log FOR INSERT
-TO authenticated
+ON public.lead_activity_log FOR INSERT TO authenticated
 WITH CHECK (auth.uid() = user_id OR public.is_admin_or_owner(auth.uid()));
 
 -- LEAD COMMENTS POLICIES
 DROP POLICY IF EXISTS "Lead comments select policy" ON public.lead_comments;
 CREATE POLICY "Lead comments select policy"
-ON public.lead_comments FOR SELECT
-TO authenticated
-USING (true);
+ON public.lead_comments FOR SELECT TO authenticated USING (true);
 
 DROP POLICY IF EXISTS "Lead comments insert policy" ON public.lead_comments;
 CREATE POLICY "Lead comments insert policy"
-ON public.lead_comments FOR INSERT
-TO authenticated
+ON public.lead_comments FOR INSERT TO authenticated
 WITH CHECK (auth.uid() = user_id OR public.is_admin_or_owner(auth.uid()));
 
 -- ATTENDANCE POLICIES
 DROP POLICY IF EXISTS "Attendance select policy" ON public.attendance;
 CREATE POLICY "Attendance select policy"
-ON public.attendance FOR SELECT
-TO authenticated
+ON public.attendance FOR SELECT TO authenticated
 USING (auth.uid() = user_id OR public.is_admin_or_owner(auth.uid()) OR public.has_role(auth.uid(), 'hr_manager'::public.app_role));
 
 DROP POLICY IF EXISTS "Attendance insert/update policy" ON public.attendance;
 CREATE POLICY "Attendance insert/update policy"
-ON public.attendance FOR ALL
-TO authenticated
+ON public.attendance FOR ALL TO authenticated
 USING (auth.uid() = user_id OR public.is_admin_or_owner(auth.uid()))
 WITH CHECK (auth.uid() = user_id OR public.is_admin_or_owner(auth.uid()));
 
--- NOTIFICATIONS POLICIES
-DROP POLICY IF EXISTS "Notifications policy" ON public.notifications;
-CREATE POLICY "Notifications policy"
-ON public.notifications FOR ALL
-TO authenticated
-USING (auth.uid() = user_id OR public.is_admin_or_owner(auth.uid()))
-WITH CHECK (auth.uid() = user_id OR public.is_admin_or_owner(auth.uid()));
-
--- ACTIVITIES / TASKS POLICIES
-DROP POLICY IF EXISTS "Activities select policy" ON public.activities;
-CREATE POLICY "Activities select policy"
-ON public.activities FOR SELECT
-TO authenticated
-USING (auth.uid() = user_id OR assigned_to = auth.uid() OR public.is_admin_or_owner(auth.uid()));
-
-DROP POLICY IF EXISTS "Activities manage policy" ON public.activities;
-CREATE POLICY "Activities manage policy"
-ON public.activities FOR ALL
-TO authenticated
-USING (auth.uid() = user_id OR assigned_to = auth.uid() OR public.is_admin_or_owner(auth.uid()))
-WITH CHECK (auth.uid() = user_id OR assigned_to = auth.uid() OR public.is_admin_or_owner(auth.uid()));
-
--- DEALS & CONTACTS POLICIES
+-- DEALS & ACTIVITIES POLICIES
 DROP POLICY IF EXISTS "Deals policy" ON public.deals;
 CREATE POLICY "Deals policy" ON public.deals FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
-DROP POLICY IF EXISTS "Contacts policy" ON public.contacts;
-CREATE POLICY "Contacts policy" ON public.contacts FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Activities policy" ON public.activities;
+CREATE POLICY "Activities policy" ON public.activities FOR ALL TO authenticated USING (true) WITH CHECK (true);
